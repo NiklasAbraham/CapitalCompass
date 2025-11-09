@@ -1,0 +1,27 @@
+[
+    {
+    "ticker": "AAPL",
+    "units": 10,
+    "type": "stock"
+    },
+    {
+    "ticker": "MSFT",
+    "units": 15,
+    "type": "stock"
+    },
+    {
+    "ticker": "VOO",
+    "units": 50,
+    "type": "etf"
+    },
+    {
+    "ticker": "NVDA",
+    "units": 5,
+    "type": "stock"
+    },
+    {
+    "ticker": "GOOG",
+    "units": 8,
+    "type": "stock"
+    }
+    ]
