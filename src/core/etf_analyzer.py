@@ -11,6 +11,31 @@ import pandas as pd
 import yfinance as yf
 
 
+def _standardise_holdings_frame(df: pd.DataFrame, max_holdings: int) -> Optional[pd.DataFrame]:
+    if df is None or df.empty:
+        return None
+
+    df = df.head(max_holdings).copy()
+    if "holdingPercent" not in df.columns:
+        if "weight" in df.columns:
+            df["holdingPercent"] = df["weight"]
+        elif "pct" in df.columns:
+            df["holdingPercent"] = df["pct"]
+        else:
+            return None
+
+    if "symbol" not in df.columns:
+        for candidate in ("ticker", "holdingSymbol", "name"):
+            if candidate in df.columns:
+                df["symbol"] = df[candidate]
+                break
+
+    if "symbol" not in df.columns:
+        return None
+
+    return df[["symbol", "holdingPercent"]].dropna()
+
+
 def get_etf_holdings(ticker: str, max_holdings: int = 10) -> Optional[pd.DataFrame]:
     """
     Attempts to retrieve the top holdings of an ETF using yfinance.
@@ -28,18 +53,30 @@ def get_etf_holdings(ticker: str, max_holdings: int = 10) -> Optional[pd.DataFra
     try:
         etf = yf.Ticker(ticker)
 
-        # Try to get holdings data
-        if hasattr(etf, "funds_data") and etf.funds_data:
-            holdings = etf.funds_data.get("holdings", None)
-            if holdings:
-                df = pd.DataFrame(holdings[:max_holdings])
-                return df
+        # Attempt via fund_holdings DataFrame
+        df_candidate = getattr(etf, "fund_holdings", None)
+        df_candidate = _standardise_holdings_frame(df_candidate, max_holdings)
+        if df_candidate is not None and not df_candidate.empty:
+            return df_candidate
+
+        # Attempt via funds_data attribute
+        funds_data = getattr(etf, "funds_data", None)
+        holdings = None
+        if funds_data is not None:
+            holdings = getattr(funds_data, "holdings", None)
+            if holdings is None and isinstance(funds_data, dict):
+                holdings = funds_data.get("holdings")
+        if holdings:
+            df_candidate = _standardise_holdings_frame(pd.DataFrame(holdings), max_holdings)
+            if df_candidate is not None and not df_candidate.empty:
+                return df_candidate
 
         # Alternative: Try using the .info attribute
         info = etf.info
-        if "holdings" in info and info["holdings"]:
-            df = pd.DataFrame(info["holdings"][:max_holdings])
-            return df
+        if isinstance(info, dict) and info.get("holdings"):
+            df_candidate = _standardise_holdings_frame(pd.DataFrame(info["holdings"]), max_holdings)
+            if df_candidate is not None and not df_candidate.empty:
+                return df_candidate
 
         print(f"Holdings data not available for {ticker}")
         return None
@@ -65,19 +102,22 @@ def analyze_portfolio_with_lookthrough(
         A DataFrame with direct and indirect holdings information.
     """
     all_holdings = []
+    missing_holdings: List[str] = []
 
     for item in portfolio:
         ticker = item.get("ticker")
-        units = item.get("units", 0)
+        units = float(item.get("units", 0))
+        market_value = item.get("market_value")
         asset_type = item.get("type", "unknown")
 
-        if not ticker or units <= 0:
+        if not ticker:
             continue
 
         try:
             ticker_obj = yf.Ticker(ticker)
             price = ticker_obj.fast_info.get("lastPrice", 0)
-            market_value = units * price
+            if market_value is None:
+                market_value = units * price
 
             if asset_type == "etf":
                 # Try to get ETF holdings
@@ -100,6 +140,7 @@ def analyze_portfolio_with_lookthrough(
                         )
                 else:
                     # No holdings data available, treat as single entity
+                    missing_holdings.append(ticker)
                     all_holdings.append(
                         {
                             "Source": ticker,
@@ -134,6 +175,12 @@ def analyze_portfolio_with_lookthrough(
     aggregated = df.groupby("Ticker")["Exposure_Value"].sum().reset_index()
     aggregated["Portfolio_Weight"] = aggregated["Exposure_Value"] / total_exposure
     aggregated = aggregated.sort_values("Portfolio_Weight", ascending=False)
+
+    if missing_holdings:
+        print(
+            "ETF holdings data not available for: "
+            + ", ".join(sorted(set(missing_holdings)))
+        )
 
     return aggregated
 

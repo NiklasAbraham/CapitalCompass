@@ -1,0 +1,22 @@
+[
+    {
+    "ticker": "URTH",
+    "weight": 0.3649,
+    "type": "etf"
+    },
+    {
+    "ticker": "IMAE.AS",
+    "weight": 0.3649,
+    "type": "etf"
+    },
+    {
+    "ticker": "XEOND.XD",
+    "weight": 0.1520,
+    "type": "etf"
+    },
+    {
+    "ticker": "CEBE.DE",
+    "weight": 0.0405,
+    "type": "etf"
+    }
+]

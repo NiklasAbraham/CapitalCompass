@@ -1,100 +1,52 @@
 # Capital Compass
 
-**A Professional Portfolio Analysis and Quantitative Simulation Toolkit**
+A Python-based toolkit for portfolio composition analysis and S&P 500 “what-if” simulations. It uses `pandas`, `yfinance`, and `matplotlib` to fetch live market data, generate publication-ready PNG charts, and quantify risk/return trade-offs.
 
-Capital Compass is a Python-based toolkit for analyzing personal investment portfolios and conducting counterfactual simulations on market indices. The toolkit combines modern data visualization with rigorous quantitative analysis to provide deep insights into portfolio composition and market dynamics.
+## Quick Start
 
-## Features
-
-### 1. Portfolio Composition Analysis
-- Real-time portfolio valuation using live market data
-- Asset allocation visualization with interactive charts
-- Sector exposure analysis
-- ETF look-through analysis (best-effort based on data availability)
-- Comprehensive holdings breakdown
-
-### 2. Index Simulation & Counterfactual Analysis
-- S&P 500 constituent scraping from Wikipedia
-- Equal-weighted index simulation
-- Counterfactual "what-if" analysis (e.g., "S&P 500 without the Magnificent 7")
-- Comparative performance analysis
-
-### 3. Performance Metrics
-- Total and annualized returns
-- Risk metrics (volatility, maximum drawdown)
-- Risk-adjusted ratios (Sharpe, Sortino, Calmar)
-- Benchmark-relative metrics (alpha, beta, information ratio)
-- Rolling performance analysis
-- Drawdown visualization
-
-## Project Structure
-
-```
-CapitalCompass/
-├── src/
-│   ├── core/
-│   │   ├── portfolio.py           # Portfolio composition analysis
-│   │   ├── market_sim.py          # Index simulation and scraping
-│   │   ├── etf_analyzer.py        # ETF holdings analysis
-│   │   └── performance_metrics.py # Risk and return calculations
-│   ├── config.py                   # Configuration parameters
-│   ├── config_ticker.json          # Portfolio holdings definition
-│   └── main.py                     # Main execution script
-├── notebooks/
-│   ├── 01_Portfolio_Analysis.ipynb # Interactive portfolio analysis
-│   └── 02_Index_Simulation.ipynb   # Interactive index simulation
-├── requirements.txt                # Python dependencies
-└── README.md                       # This file
-```
-
-## Installation
-
-### Prerequisites
-- Python 3.8 or higher
-- Conda (recommended) or pip
-
-### Setup with Conda
-
-1. Clone the repository:
 ```bash
 cd ~/Desktop/NiklasProjects/CapitalCompass
-```
-
-2. Create a conda environment:
-```bash
-conda create -n capital_compass python=3.10
+conda create -n capital_compass python=3.10    # first time only
 conda activate capital_compass
-```
-
-3. Install dependencies:
-```bash
 pip install -r requirements.txt
 ```
 
-## Usage
+Optional first-run check:
 
-### Configuration
+```bash
+jupyter notebook notebooks/00_Getting_Started.ipynb
+```
 
-Edit `src/config_ticker.json` to define your portfolio:
+This notebook verifies imports, fetches a price sample, inspects your portfolio config, and runs a mini analysis.
+
+## Configure Your Portfolio
+
+Holdings live in `src/config_ticker.json` (rename to `portfolio.json` if you like).
+You can specify positions either by absolute units *or* by percentage weights:
 
 ```json
 [
-    {
-        "ticker": "AAPL",
-        "units": 10,
-        "type": "stock"
-    },
-    {
-        "ticker": "VOO",
-        "units": 50,
-        "type": "etf"
-    }
+  {"ticker": "AAPL", "units": 10,  "type": "stock"},
+  {"ticker": "NVDA", "units": 5,   "type": "stock"},
+  {"ticker": "VOO",  "units": 50,  "type": "etf"}
 ]
 ```
 
-### Running Analysis
+```json
+[
+  {"ticker": "CSPX.L", "weight": 0.36, "type": "etf"},
+  {"ticker": "IUSM.L", "weight": 0.06, "type": "etf"},
+  {"ticker": "XCS6.L", "weight": 0.04, "type": "etf"}
+]
+```
 
-#### Option 1: Command Line
+- Weight values may be fractions (summing to 1) or percentages (summing to 100).  
+- Mixing units and weights in the same file is not supported.
+- Tickers must use Yahoo Finance symbols (e.g., `BRK-B`, `BF-B`, `GOOG`, `GOOGL`).
+
+## Run the Toolkit
+
+### Command Line
 
 ```bash
 conda activate capital_compass
@@ -102,188 +54,124 @@ cd src
 python main.py
 ```
 
-This will:
-1. Load your portfolio from `config_ticker.json`
-2. Generate asset and sector allocation visualizations
-3. Run the index simulation analysis
-4. Open interactive plots in your browser
+The CLI loads your portfolio, saves asset/sector allocation charts under `outputs/`, and runs the default S&P 500 exclusion scenario (Magnificent Seven, 2020‑01‑01 onwards) with the resulting curve stored in the same folder.
 
-#### Option 2: Jupyter Notebooks (Recommended)
+### Jupyter Workbooks
 
-```bash
-conda activate capital_compass
-jupyter notebook
+- `notebooks/01_Portfolio_Analysis.ipynb` – deep dive into portfolio valuation, allocation, ETF look-through, and sector exposure.
+- `notebooks/02_Index_Simulation.ipynb` – scrape constituents, compare equal-weight baseline vs. custom exclusions, compute performance statistics, drawdowns, and rolling returns.
+
+Each cell is documented so you can tweak parameters (e.g., exclusion lists, start dates) on the fly.
+
+## Features Overview
+
+- **Portfolio Composition Analysis**
+  - Live pricing via Yahoo Finance
+  - Market value and weight calculation
+  - Asset and sector allocation PNG charts (matplotlib pies)
+  - ETF holdings look-through when data is available
+- **CAPM Toolkit**
+  - Fetch aligned asset/benchmark return series (`analysis.capm_data`)
+  - Estimate betas and CAPM expected returns
+  - Build maximum Sharpe and minimum variance portfolios with optional shorting
+- **Index “What-If” Simulation**
+  - Scrape S&P 500 symbols from Wikipedia (`pandas.read_html`)
+  - Download historical adjusted closes for all constituents plus `^GSPC`
+  - Build baseline/exclusion portfolios using **current market-cap weights** (falls back to equal weights if caps are missing)
+  - Save cumulative performance comparison as a PNG line chart
+- **Performance & Risk Metrics**
+  - Total/annualised return, volatility, Sharpe, Sortino, Calmar
+  - Beta, Jensen’s alpha, information ratio
+  - Maximum drawdown with dates, rolling 1-year returns
+  - Printable performance reports for quick review
+
+## Architecture
+
+```
+CapitalCompass/
+├── src/
+│   ├── core/
+│   │   ├── portfolio.py            # analyze_portfolio_composition
+│   │   ├── market_sim.py           # get_sp500_tickers, analyze_index_exclusion
+│   │   ├── etf_analyzer.py         # ETF look-through helpers
+│   │   └── performance_metrics.py  # return/risk calculations
+│   ├── config.py                   # constants (file paths, defaults)
+│   ├── config_ticker.json          # portfolio definition
+│   └── main.py                     # CLI orchestrator
+└── notebooks/                      # interactive workflows (00/01/02)
 ```
 
-Navigate to the `notebooks/` directory and open:
+Everything in `src/core` is importable so you can script custom workflows.
 
-**01_Portfolio_Analysis.ipynb**
-- Comprehensive portfolio composition analysis
-- ETF look-through
-- Sector breakdown
-- Holdings tables
+### CAPM Modules (Experimental)
 
-**02_Index_Simulation.ipynb**
-- S&P 500 counterfactual simulation
-- Performance metrics comparison
-- Drawdown analysis
-- Rolling returns visualization
+Located under `src/analysis/`:
 
-## Methodology
+- `capm_data.py` – helpers to pull price history, compute returns, and package CAPM inputs in a `CapmDataset`.
+- `capm_optimizer.py` – CAPM beta/expected-return estimation plus optimisation routines:
+  - `summarise_capm` / `generate_capm_portfolio_summary`
+  - `optimise_max_sharpe` for the tangency portfolio
+  - `minimise_variance` for constrained minimum variance allocations
 
-### Portfolio Analysis
-
-The toolkit fetches real-time market data using the `yfinance` library, which accesses Yahoo Finance's API. For each holding:
-
-1. Current price is retrieved
-2. Market value is calculated (units × price)
-3. Portfolio weights are computed
-4. Sector data is aggregated
-
-**ETF Look-Through:** The toolkit attempts to retrieve ETF holdings to show indirect exposure. However, this data is often incomplete or unavailable through free APIs. Direct holdings are always accurately represented.
-
-### Index Simulation
-
-The S&P 500 is a market-capitalization-weighted index. Truly accurate counterfactual simulation would require historical daily market-cap data for all 500 constituents, which is not freely available.
-
-**Solution:** This toolkit uses an **equal-weighted index proxy**, a standard academic approach. The methodology:
-
-1. Scrape current S&P 500 constituents from Wikipedia
-2. Download historical adjusted close prices for all constituents
-3. Calculate daily returns for each stock
-4. Create equal-weighted portfolios:
-   - **Baseline:** Mean return of all 500 stocks
-   - **Modified:** Mean return excluding specified stocks
-5. Compare against the official S&P 500 index (^GSPC)
-
-This approach is directionally accurate and widely used in quantitative research for analyzing constituent contribution.
-
-## Performance Metrics
-
-### Return Metrics
-- **Total Return:** Cumulative return over the period
-- **Annualized Return:** Geometric mean return, annualized
-
-### Risk Metrics
-- **Volatility:** Annualized standard deviation of returns
-- **Maximum Drawdown:** Largest peak-to-trough decline
-
-### Risk-Adjusted Metrics
-- **Sharpe Ratio:** Excess return per unit of total risk
-- **Sortino Ratio:** Excess return per unit of downside risk
-- **Calmar Ratio:** Annualized return divided by maximum drawdown
-
-### Benchmark-Relative Metrics
-- **Beta:** Sensitivity to benchmark movements
-- **Alpha:** Excess return over expected return (Jensen's alpha)
-- **Information Ratio:** Excess return per unit of tracking error
-
-## Data Sources
-
-- **Market Data:** Yahoo Finance via `yfinance`
-- **S&P 500 Constituents:** Wikipedia (List of S&P 500 companies)
-
-## Limitations and Considerations
-
-1. **Data Quality:** Free market data may have delays, gaps, or inaccuracies
-2. **ETF Holdings:** Look-through data is best-effort and may be incomplete
-3. **Equal Weighting:** Index simulation uses equal weighting, not market-cap weighting
-4. **Survivorship Bias:** Uses current constituents, not historical composition
-5. **No Rebalancing:** Does not account for index rebalancing events
-6. **No Dividends:** Uses adjusted close prices (dividends reinvested)
-
-## Technical Stack
-
-- **Python 3.10**
-- **pandas:** Data manipulation and time-series analysis
-- **yfinance:** Yahoo Finance API wrapper
-- **plotly:** Interactive visualizations
-- **beautifulsoup4 / lxml:** Web scraping for S&P 500 constituents
-- **numpy / scipy:** Numerical computations
-- **jupyter:** Interactive analysis notebooks
-
-## Examples
-
-### Analyzing Your Portfolio
+Example usage:
 
 ```python
-from core.portfolio import analyze_portfolio_composition
+from analysis import prepare_capm_dataset, generate_capm_portfolio_summary
 
-fig_asset, fig_sector = analyze_portfolio_composition('config_ticker.json')
-fig_asset.show()
-fig_sector.show()
-```
-
-### Simulating Index Performance
-
-```python
-from core.market_sim import analyze_index_exclusion
-
-magnificent_seven = ['AAPL', 'MSFT', 'GOOG', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA']
-fig = analyze_index_exclusion(
-    exclusion_list=magnificent_seven,
-    start_date='2020-01-01'
+dataset = prepare_capm_dataset(
+    asset_tickers=["AAPL", "MSFT", "VOO"],
+    benchmark_ticker="^GSPC",
+    start_date="2018-01-01",
 )
-fig.show()
+
+summary = generate_capm_portfolio_summary(dataset, allow_short=False)
+print(summary["betas"])
+print(summary["max_sharpe_weights"])
 ```
 
-### Generating Performance Reports
+## Methodology Highlights
 
-```python
-from core.performance_metrics import generate_performance_report, print_performance_report
-import yfinance as yf
+- **Portfolio valuation** uses `Ticker.fast_info['lastPrice']` and `Ticker.info['sector']`. ETFs are labeled `ETF / Other` when sector data is missing.
+- **ETF look-through** is “best effort”: `yfinance` holdings data is used when present; otherwise ETFs are treated as single assets.
+- **Index simulation** default baseline uses today’s market-cap weights fetched from Yahoo Finance. Historical point-in-time weights are not available for free, so this is a snapshot approximation; when market caps cannot be retrieved the code falls back to equal weighting. Symbols containing dots are converted to Yahoo’s dash notation (e.g., `BRK.B → BRK-B`).
 
-# Download data
-data = yf.download('SPY', start='2020-01-01')
-returns = data['Adj Close'].pct_change().dropna()
+## Metrics Reference
 
-# Generate report
-report = generate_performance_report(returns, risk_free_rate=0.02)
-print_performance_report(report)
-```
+- **Return**: cumulative, annualised.
+- **Risk**: annualised volatility, maximum drawdown, drawdown curve.
+- **Risk-adjusted**: Sharpe, Sortino, Calmar.
+- **Benchmark-relative**: beta, Jensen’s alpha, information ratio (tracking error).
+- **Rolling analysis**: 252-day rolling returns to see regime shifts.
 
-## Further Development
+Use `generate_performance_report` and `print_performance_report` for a ready-made summary.
 
-Potential enhancements for this toolkit:
+## Limitations & Assumptions
 
-1. **Market-Cap Weighted Simulation:** Integrate with paid data providers for accurate historical market caps
-2. **Portfolio Optimization:** Add mean-variance optimization capabilities
-3. **Monte Carlo Simulation:** Implement forward-looking scenario analysis
-4. **Backtesting Engine:** Add support for rebalancing strategies
-5. **Additional Asset Classes:** Extend beyond equities (bonds, commodities, crypto)
-6. **Risk Models:** Implement factor models (Fama-French, etc.)
-7. **Tax Analysis:** Add tax-loss harvesting and capital gains tracking
+1. Data comes from Yahoo Finance; outages or delays can occur.
+2. ETF holdings are often incomplete on free APIs.
+3. Equal-weight simulations ignore market-cap differences and survivorship bias (current constituents only).
+4. No automated rebalancing, tax modelling, or transaction cost estimation.
+5. Dividends are implicitly handled via adjusted close, assuming reinvestment.
 
-## References and Further Reading
+## Troubleshooting & Tips
 
-### Books
-- **"Python for Finance: Mastering Data-Driven Finance" (2nd Ed.)** by Yves Hilpisch
-  - Comprehensive guide to quantitative finance with Python
-  - Covers everything from time-series analysis to ML in trading
+- **Import errors** → double-check `conda activate capital_compass` and reinstall requirements.
+- **Ticker not found** → confirm Yahoo Finance symbol (case-sensitive, use dashes instead of dots).
+- **Slow downloads** → fetching ~500 tickers can take minutes; narrow the exclusion list or date range while testing.
+- **Missing charts** → check the `outputs/` directory for generated PNG files; rerun if downloads failed mid-way.
 
-### Online Resources
-- **QuantStart** (quantstart.com): Articles on backtesting and algorithmic trading
-- **Portfolio Visualizer** (portfoliovisualizer.com): Reference for portfolio analytics
-- **Yahoo Finance API** (yfinance documentation): Data source documentation
+## Extending the Toolkit
 
-### Academic Papers
-- Sharpe, William F. (1994). "The Sharpe Ratio"
-- Sortino, Frank A. (1994). "Downside Risk"
-- Jensen, Michael C. (1968). "The Performance of Mutual Funds"
+Future enhancements could include:
+- Market-cap weighted simulations (requires paid constituent weights)
+- Portfolio optimisation (mean-variance, risk-parity)
+- Monte Carlo forecasting and stress testing
+- Event-driven backtesting with scheduled rebalances
+- Multi-asset support (fixed income, commodities, crypto)
+- Factor attribution (e.g., Fama-French variables)
+- Tax-aware performance tracking
 
-## License
+## License & Disclaimer
 
-This project is for educational and personal use. Market data is provided by Yahoo Finance and subject to their terms of service.
-
-## Contributing
-
-This is a personal project, but suggestions and improvements are welcome. Please ensure all code follows the existing style and includes appropriate documentation.
-
-## Contact
-
-For questions or suggestions, please create an issue in the repository.
-
----
-
-**Disclaimer:** This toolkit is for informational and educational purposes only. It does not constitute financial advice. Always conduct your own research and consult with qualified financial professionals before making investment decisions.
+Capital Compass is provided for personal and educational use. Market data is sourced via `yfinance` and subject to Yahoo Finance terms. This toolkit does not constitute financial advice—consult a qualified professional before making investment decisions.
 

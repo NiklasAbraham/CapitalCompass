@@ -10,6 +10,11 @@
     "type": "stock"
     },
     {
+        "ticker": "IMAE.AS",
+        "units": 10,
+        "type": "etf"
+    },
+    {
     "ticker": "VOO",
     "units": 50,
     "type": "etf"

@@ -11,14 +11,9 @@ It orchestrates the workflow by:
 4. Displaying the plots to the user.
 """
 
-import plotly.io as pio
-
 from config import DEFAULT_START_DATE, PORTFOLIO_FILE
 from core.market_sim import analyze_index_exclusion
-from core.portfolio import analyze_portfolio_composition
-
-# Set Plotly to open plots in the default browser
-pio.renderers.default = "browser"
+from core.portfolio import analyze_portfolio_composition, create_dummy_portfolio
 
 
 def run_portfolio_analysis(portfolio_file: str = PORTFOLIO_FILE):
@@ -33,17 +28,16 @@ def run_portfolio_analysis(portfolio_file: str = PORTFOLIO_FILE):
     print("=" * 70)
 
     try:
-        fig_asset, fig_sector = analyze_portfolio_composition(portfolio_file)
+        create_dummy_portfolio(portfolio_file)
+        asset_path, sector_path = analyze_portfolio_composition(portfolio_file)
 
-        if fig_asset:
-            print("\nDisplaying Asset Allocation plot...")
-            fig_asset.show()
+        if asset_path:
+            print(f"\nAsset allocation chart saved to: {asset_path}")
 
-        if fig_sector:
-            print("Displaying Sector Allocation plot...")
-            fig_sector.show()
+        if sector_path:
+            print(f"Sector allocation chart saved to: {sector_path}")
 
-        print("\nPortfolio analysis complete.")
+        print("\nPortfolio analysis complete. Charts saved to the outputs folder.")
 
     except FileNotFoundError:
         print(f"\nERROR: {portfolio_file} not found.")
@@ -87,13 +81,12 @@ def run_simulation_analysis(
     print(f"  Exclusion List ({len(exclusion_list)}): {', '.join(exclusion_list)}")
 
     try:
-        fig_sim = analyze_index_exclusion(
+        plot_path = analyze_index_exclusion(
             exclusion_list=exclusion_list, start_date=start_date
         )
 
-        if fig_sim:
-            print("\nDisplaying simulation plot...")
-            fig_sim.show()
+        if plot_path:
+            print(f"\nSimulation chart saved to: {plot_path}")
             print("\nIndex simulation complete.")
         else:
             print("\nSimulation failed. Check error messages above.")
