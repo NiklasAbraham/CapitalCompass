@@ -2,6 +2,16 @@
 
 A Python-based toolkit for portfolio composition analysis and S&P 500 “what-if” simulations. It uses `pandas`, `yfinance`, and `matplotlib` to fetch live market data, generate publication-ready PNG charts, and quantify risk/return trade-offs.
 
+## NEW: Asset-Based Architecture with AlphaVantage
+
+CapitalCompass now features a flexible **class-based architecture** with integrated **AlphaVantage API** support:
+- Asset Classes (`Stock`, `ETF`) with polymorphic behavior
+- ETF look-through using AlphaVantage API (automatic Yahoo Finance fallback)
+- Smart exclusions for money market and bond funds
+- Extensible design for adding new asset types
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for complete technical documentation.
+
 ## Quick Start
 
 ```bash
@@ -46,7 +56,27 @@ You can specify positions either by absolute units *or* by percentage weights:
 
 ## Run the Toolkit
 
-### Command Line
+### New: Asset-Based Analysis (Recommended)
+
+Run the enhanced portfolio analysis with AlphaVantage integration:
+
+```bash
+cd ~/Desktop/NiklasProjects/CapitalCompass
+conda activate capital
+python src/analysis/simple_portfolio_analysis.py
+```
+
+This provides:
+- Current portfolio distribution with asset allocation charts
+- ETF look-through using AlphaVantage API (with Yahoo Finance fallback)
+- Aggregated exposure showing direct and indirect holdings
+- Performance metrics for each ETF
+
+**Setup AlphaVantage** (optional but recommended):
+1. Get a free API key at https://www.alphavantage.co/support/#api-key
+2. Create `.env` file in project root: `echo "ALPHAVANTAGE_API_KEY=your_key" > .env`
+
+### Legacy Command Line
 
 ```bash
 conda activate capital_compass

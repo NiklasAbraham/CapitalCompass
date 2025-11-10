@@ -11,24 +11,32 @@ import pandas as pd
 import yfinance as yf
 
 
-def _standardise_holdings_frame(df: pd.DataFrame, max_holdings: int) -> Optional[pd.DataFrame]:
+def _standardise_holdings_frame(
+    df: pd.DataFrame, max_holdings: int
+) -> Optional[pd.DataFrame]:
     if df is None or df.empty:
         return None
 
     df = df.head(max_holdings).copy()
-    if "holdingPercent" not in df.columns:
-        if "weight" in df.columns:
-            df["holdingPercent"] = df["weight"]
-        elif "pct" in df.columns:
-            df["holdingPercent"] = df["pct"]
-        else:
-            return None
 
-    if "symbol" not in df.columns:
-        for candidate in ("ticker", "holdingSymbol", "name"):
+    # Normalise weight column
+    if "holdingPercent" not in df.columns:
+        for candidate in ("Holding Percent", "weight", "pct", "holding_percent"):
             if candidate in df.columns:
-                df["symbol"] = df[candidate]
+                df["holdingPercent"] = df[candidate]
                 break
+    if "holdingPercent" not in df.columns:
+        return None
+
+    # Normalise symbol column
+    if "symbol" not in df.columns:
+        if df.index.name and df.index.name.lower() in {"symbol", "ticker"}:
+            df = df.reset_index().rename(columns={df.index.name: "symbol"})
+        else:
+            for candidate in ("Symbol", "symbol", "ticker", "holdingSymbol", "name"):
+                if candidate in df.columns:
+                    df["symbol"] = df[candidate]
+                    break
 
     if "symbol" not in df.columns:
         return None
@@ -63,11 +71,22 @@ def get_etf_holdings(ticker: str, max_holdings: int = 10) -> Optional[pd.DataFra
         funds_data = getattr(etf, "funds_data", None)
         holdings = None
         if funds_data is not None:
+            # Newer yfinance exposes top_holdings DataFrame
+            top_holdings = getattr(funds_data, "top_holdings", None)
+            if hasattr(top_holdings, "reset_index"):
+                df_candidate = _standardise_holdings_frame(
+                    top_holdings.reset_index(), max_holdings
+                )
+                if df_candidate is not None and not df_candidate.empty:
+                    return df_candidate
+
             holdings = getattr(funds_data, "holdings", None)
             if holdings is None and isinstance(funds_data, dict):
                 holdings = funds_data.get("holdings")
         if holdings:
-            df_candidate = _standardise_holdings_frame(pd.DataFrame(holdings), max_holdings)
+            df_candidate = _standardise_holdings_frame(
+                pd.DataFrame(holdings), max_holdings
+            )
             if df_candidate is not None and not df_candidate.empty:
                 return df_candidate
 

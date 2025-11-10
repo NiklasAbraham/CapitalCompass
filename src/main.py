@@ -66,15 +66,15 @@ def run_simulation_analysis(
     if exclusion_list is None:
         # Default: "The Magnificent 7"
         exclusion_list = [
-            "AAPL",
-            "MSFT",
-            "GOOG",
-            "GOOGL",
-            "AMZN",
-            "NVDA",
-            "META",
-            "TSLA",
-        ]
+        "AAPL",
+        "MSFT",
+        "GOOG",
+        "GOOGL",
+        "AMZN",
+        "NVDA",
+        "META",
+        "TSLA",
+    ]
 
     print("\nSimulation Parameters:")
     print(f"  Start Date: {start_date}")

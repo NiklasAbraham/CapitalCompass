@@ -1,273 +1,330 @@
 """
-Portfolio Composition Analysis Module
-
-This module contains functions related to analyzing the user's
-personal portfolio as defined in portfolio.json.
+Portfolio composition analysis using asset classes.
 """
 
 import json
 import os
-from typing import Optional, Tuple
+from pathlib import Path
+from typing import List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import pandas as pd
-import yfinance as yf
 
 from config import PORTFOLIO_FILE
-from core.etf_analyzer import analyze_portfolio_with_lookthrough
-
-OUTPUT_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "outputs")
-)
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+from core.assets import ETF, Asset, Stock
 
 
 class SavedPlot:
-    """
-    Lightweight wrapper around a saved chart file, providing a `show()` method for
-    interactive environments (e.g., Jupyter notebooks).
-    """
+    """Wrapper for saved plot paths with display capability."""
 
     def __init__(self, path: str):
         self.path = path
 
     def show(self):
-        if not self.path or not os.path.exists(self.path):
-            print("Plot not available.")
-            return
-
+        """Display the plot in Jupyter or print path otherwise."""
         try:
-            from IPython.display import Image, display  # type: ignore
+            from IPython.display import Image, display
 
             display(Image(filename=self.path))
-        except Exception:
+        except ImportError:
             print(f"Plot saved to: {self.path}")
 
-    def __repr__(self):
-        return f"SavedPlot(path='{self.path}')"
+    def __str__(self) -> str:
+        return self.path
 
 
-def create_dummy_portfolio(filepath: str = PORTFOLIO_FILE):
+def load_portfolio_config(filepath: str) -> List[Asset]:
     """
-    Creates a dummy portfolio.json file if one does not exist.
-    This provides a template for the user.
-    """
-    if not os.path.exists(filepath):
-        print(f"Creating dummy {filepath} as a template...")
-        dummy_data = [
-            {"ticker": "AAPL", "units": 10, "type": "stock"},
-            {"ticker": "MSFT", "units": 15, "type": "stock"},
-            {"ticker": "VOO", "units": 50, "type": "etf"},
-            {"ticker": "NVDA", "units": 5, "type": "stock"},
-        ]
-        with open(filepath, "w") as f:
-            json.dump(dummy_data, f, indent=4)
+    Load portfolio configuration and create Asset objects.
 
-
-def analyze_portfolio_composition(
-    filepath: str = PORTFOLIO_FILE,
-    lookup_etf_holdings: bool = False,
-    max_etf_holdings: int = 15,
-) -> Tuple[Optional[SavedPlot], Optional[SavedPlot], Optional[pd.DataFrame]]:
-    """
-    Analyzes the composition of a portfolio defined in a JSON file.
-
-    Fetches live data, calculates market values and weights, and
-    returns two Plotly Figure objects for asset and sector allocation.
-
-    Raises:
-        FileNotFoundError: If the portfolio.json file is not found.
+    Args:
+        filepath: Path to portfolio JSON file.
 
     Returns:
-        asset_plot, sector_plot, etf_lookthrough_df (only when lookup_etf_holdings=True)
+        List of Asset objects (Stock or ETF instances).
     """
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"Portfolio file not found: {filepath}")
 
-    try:
-        with open(filepath, "r") as f:
-            portfolio = json.load(f)
-    except FileNotFoundError:
-        print(f"Error: {filepath} not found.")
-        raise
-    except json.JSONDecodeError:
-        print(f"Error: Could not decode {filepath}. Check JSON format.")
-        return None, None, None
+    with open(filepath, "r") as f:
+        config = json.load(f)
 
-    if not portfolio:
-        print("Portfolio file is empty.")
-        return None, None, None
+    assets: List[Asset] = []
 
-    entries = []
-    has_units = False
-    has_weights = False
+    for item in config:
+        ticker = item["ticker"]
+        asset_type = item.get("type", "stock").lower()
+        units = item.get("units", 0)
+        weight = item.get("weight") or item.get("percentage")
 
+        if asset_type == "etf":
+            asset = ETF(ticker=ticker, units=units, weight=weight)
+        else:
+            asset = Stock(ticker=ticker, units=units, weight=weight)
+
+        assets.append(asset)
+
+    return assets
+
+
+def fetch_portfolio_data(assets: List[Asset]) -> pd.DataFrame:
+    """
+    Fetch market data for all assets in portfolio.
+
+    Args:
+        assets: List of Asset objects.
+
+    Returns:
+        DataFrame with portfolio holdings data.
+    """
     print("Fetching live market data for portfolio...")
-    for item in portfolio:
-        ticker_str = item.get("ticker")
-        if not ticker_str:
-            continue
 
-        units = item.get("units")
-        weight_input = item.get("weight")
-        if weight_input is None:
-            weight_input = item.get("percentage")
+    holdings_data = []
 
-        try:
-            ticker_obj = yf.Ticker(ticker_str)
-            price = ticker_obj.fast_info.get("lastPrice", float("nan"))
-            sector = "ETF / Other"
-            if item.get("type") == "stock":
-                sector = ticker_obj.info.get("sector", "Stock (No Sector)")
-        except Exception as e:
-            print(f"Warning: Could not fetch data for {ticker_str}: {e}")
-            price = float("nan")
-            sector = "Unknown"
+    for asset in assets:
+        success = asset.fetch_data()
 
-        if units is not None and units > 0:
-            has_units = True
-            entries.append(
+        if success:
+            holdings_data.append(
                 {
-                    "Ticker": ticker_str,
-                    "Units": units,
-                    "Price": price,
-                    "Sector": sector,
-                    "mode": "units",
-                }
-            )
-        elif weight_input is not None:
-            has_weights = True
-            try:
-                weight_value = float(weight_input)
-            except (TypeError, ValueError):
-                print(f"Warning: Invalid weight value for {ticker_str}; skipping.")
-                continue
-            entries.append(
-                {
-                    "Ticker": ticker_str,
-                    "Units": None,
-                    "Price": price,
-                    "Sector": sector,
-                    "mode": "weights",
-                    "weight_input": weight_value,
+                    "Ticker": asset.ticker,
+                    "Type": asset.asset_type.upper(),
+                    "Units": asset.units if asset.units > 0 else None,
+                    "Weight": asset.weight,
+                    "Price": asset.price,
+                    "Market_Value": asset.market_value,
+                    "Sector": asset.sector,
+                    "Name": asset.name,
                 }
             )
         else:
-            print(f"Warning: {ticker_str} has neither units nor weight; skipping.")
-
-    if not entries:
-        print("No valid holdings data fetched.")
-        return None, None
-
-    if has_units and has_weights:
-        print(
-            "Error: Mixing absolute units and percentage weights in the same "
-            "portfolio is not supported. Please choose one approach."
-        )
-        return None, None
-
-    holdings_data = []
-    total_portfolio_value = 0.0
-
-    if has_units:
-        for entry in entries:
-            market_value = entry["Units"] * entry["Price"]
-            total_portfolio_value += market_value
+            print(f"Warning: Could not fetch data for {asset.ticker}")
             holdings_data.append(
                 {
-                    "Ticker": entry["Ticker"],
-                    "Units": entry["Units"],
-                    "Price": entry["Price"],
-                    "Market_Value": market_value,
-                    "Sector": entry["Sector"],
-                }
-            )
-        print(f"Total Portfolio Value: ${total_portfolio_value:,.2f}")
-    else:
-        weights_raw = [abs(e["weight_input"]) for e in entries]
-        total_raw = sum(weights_raw)
-        if total_raw == 0:
-            print("Error: Weight entries sum to zero.")
-            return None, None, None
-            return None, None, None
-
-        # If weights look like percentages (e.g., sum approx 100), convert to fraction.
-        if total_raw > 1.5:
-            weights_raw = [w / 100.0 for w in weights_raw]
-            total_raw = sum(weights_raw)
-
-        weights_normalised = [w / total_raw for w in weights_raw]
-        total_portfolio_value = 1.0  # Notional total
-        print(
-            "Portfolio defined by weights only. Using notional total value of 1.0 "
-            "for allocation charts."
-        )
-
-        for entry, weight in zip(entries, weights_normalised):
-            market_value = weight * total_portfolio_value
-            holdings_data.append(
-                {
-                    "Ticker": entry["Ticker"],
-                    "Units": None,
-                    "Price": entry["Price"],
-                    "Market_Value": market_value,
-                    "Sector": entry["Sector"],
+                    "Ticker": asset.ticker,
+                    "Type": asset.asset_type.upper(),
+                    "Units": asset.units if asset.units > 0 else None,
+                    "Weight": asset.weight,
+                    "Price": None,
+                    "Market_Value": None,
+                    "Sector": "Unknown",
+                    "Name": asset.ticker,
                 }
             )
 
-    # Create DataFrame for analysis
     df = pd.DataFrame(holdings_data)
-    df["Weight"] = df["Market_Value"] / total_portfolio_value
 
-    # --- Visualization 1: Asset Allocation ---
-    asset_path = os.path.join(OUTPUT_DIR, "portfolio_asset_allocation.png")
-    plt.figure(figsize=(6, 6))
-    plt.pie(
-        df["Market_Value"],
-        labels=df["Ticker"],
+    # Handle weight-based vs units-based portfolios
+    has_units = df["Units"].notna().any()
+    has_weights = df["Weight"].notna().any()
+
+    if has_weights and not has_units:
+        # Weight-only portfolio: normalize weights and use notional value
+        total_weight = df["Weight"].sum()
+        if abs(total_weight - 1.0) > 0.01:
+            print(f"Normalizing weights (sum={total_weight:.4f}) to 1.0")
+            df["Weight"] = df["Weight"] / total_weight
+
+        # Use notional $1 for visualization
+        df["Market_Value"] = df["Weight"]
+        total_value = 1.0
+        print(
+            "Portfolio defined by weights only. Using notional total value of 1.0 for allocation charts."
+        )
+
+    elif has_units:
+        # Units-based portfolio: calculate market values
+        total_value = df["Market_Value"].sum()
+        df["Weight"] = df["Market_Value"] / total_value
+
+    else:
+        raise ValueError(
+            "Portfolio must specify either 'units' or 'weight' for each holding."
+        )
+
+    return df
+
+
+def analyze_portfolio_with_assets(
+    assets: List[Asset],
+    max_etf_holdings: int = 15,
+) -> Tuple[Optional[SavedPlot], Optional[SavedPlot], pd.DataFrame, pd.DataFrame]:
+    """
+    Analyze portfolio composition with ETF look-through.
+
+    Args:
+        assets: List of Asset objects.
+        max_etf_holdings: Maximum holdings to retrieve per ETF.
+
+    Returns:
+        Tuple of (asset_plot, sector_plot, holdings_df, lookthrough_df).
+    """
+    # Fetch portfolio data
+    holdings_df = fetch_portfolio_data(assets)
+
+    # Create output directory
+    output_dir = Path(__file__).resolve().parent.parent.parent / "outputs"
+    output_dir.mkdir(exist_ok=True)
+
+    # Asset allocation plot
+    asset_path = output_dir / "portfolio_asset_allocation.png"
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    wedges, texts, autotexts = ax.pie(
+        holdings_df["Market_Value"],
+        labels=holdings_df["Ticker"],
         autopct="%1.1f%%",
         startangle=90,
     )
-    plt.title("Portfolio Asset Allocation (by Market Value)")
+
+    for autotext in autotexts:
+        autotext.set_color("white")
+        autotext.set_fontsize(10)
+
+    ax.set_title("Portfolio Asset Allocation", fontsize=14, fontweight="bold")
     plt.tight_layout()
     plt.savefig(asset_path, dpi=150)
     plt.close()
 
-    # --- Visualization 2: Sector Allocation (Stocks Only) ---
-    sector_path: Optional[str] = None
-    stock_df = df[~df["Sector"].str.contains("ETF")]
-    if not stock_df.empty:
-        sector_grouped = stock_df.groupby("Sector")["Market_Value"].sum().reset_index()
+    # Sector allocation plot (only for stocks with valid sectors)
+    sector_df = holdings_df[
+        (holdings_df["Type"] == "STOCK") & (holdings_df["Sector"] != "Unknown")
+    ]
 
-        sector_path = os.path.join(OUTPUT_DIR, "portfolio_sector_allocation.png")
-        plt.figure(figsize=(6, 6))
-        plt.pie(
-            sector_grouped["Market_Value"],
-            labels=sector_grouped["Sector"],
+    sector_plot = None
+    if not sector_df.empty:
+        sector_summary = sector_df.groupby("Sector")["Market_Value"].sum()
+
+        sector_path = output_dir / "portfolio_sector_allocation.png"
+        fig, ax = plt.subplots(figsize=(10, 7))
+
+        wedges, texts, autotexts = ax.pie(
+            sector_summary.values,
+            labels=sector_summary.index,
             autopct="%1.1f%%",
             startangle=90,
         )
-        plt.title("Stock Holdings Sector Allocation (by Market Value)")
+
+        for autotext in autotexts:
+            autotext.set_color("white")
+            autotext.set_fontsize(10)
+
+        ax.set_title("Portfolio Sector Allocation", fontsize=14, fontweight="bold")
         plt.tight_layout()
         plt.savefig(sector_path, dpi=150)
         plt.close()
-    else:
-        print("No stocks with sector data found; skipping sector plot.")
 
-    asset_plot = SavedPlot(asset_path) if asset_path else None
-    sector_plot = SavedPlot(sector_path) if sector_path else None
+        sector_plot = SavedPlot(str(sector_path))
 
-    lookthrough_df: Optional[pd.DataFrame] = None
-    if lookup_etf_holdings:
-        lookthrough_df = analyze_portfolio_with_lookthrough(
-            [
+    # ETF look-through analysis
+    lookthrough_data = []
+    etfs_without_data = []
+
+    for asset in assets:
+        if isinstance(asset, ETF):
+            holdings = asset.get_holdings(max_etf_holdings)
+
+            if holdings is not None and not holdings.empty:
+                # Calculate contribution of each underlying holding
+                etf_weight = asset.weight or (
+                    asset.market_value / holdings_df["Market_Value"].sum()
+                )
+
+                for _, row in holdings.iterrows():
+                    symbol = row.get("Symbol")
+                    weight = row.get("Weight", 0)
+                    name = row.get("Name", symbol)
+
+                    if symbol and weight:
+                        contribution = etf_weight * weight
+                        lookthrough_data.append(
+                            {
+                                "Ticker": symbol,
+                                "Name": name,
+                                "ETF_Source": asset.ticker,
+                                "Weight_in_ETF": weight,
+                                "Contribution_to_Portfolio": contribution,
+                            }
+                        )
+            else:
+                etfs_without_data.append(asset.ticker)
+
+    # Create look-through DataFrame
+    if lookthrough_data:
+        lookthrough_df = pd.DataFrame(lookthrough_data)
+
+        # Aggregate by ticker (same stock may appear in multiple ETFs)
+        aggregated = (
+            lookthrough_df.groupby("Ticker")
+            .agg(
                 {
-                    "ticker": row["Ticker"],
-                    "units": row["Units"] if row["Units"] is not None else 0,
-                    "type": "etf" if "ETF" in row["Sector"] else "stock",
-                    "market_value": row["Market_Value"],
+                    "Name": "first",
+                    "Contribution_to_Portfolio": "sum",
+                    "ETF_Source": lambda s: ", ".join(sorted(set(filter(None, s)))),
                 }
-                for row in holdings_data
-            ],
-            max_etf_holdings=max_etf_holdings,
+            )
+            .reset_index()
         )
 
-    return asset_plot, sector_plot, lookthrough_df
+        # Add direct holdings (non-ETF assets)
+        for asset in assets:
+            if not isinstance(asset, ETF):
+                direct_weight = asset.weight or (
+                    asset.market_value / holdings_df["Market_Value"].sum()
+                )
+                aggregated = pd.concat(
+                    [
+                        aggregated,
+                        pd.DataFrame(
+                            [
+                                {
+                                    "Ticker": asset.ticker,
+                                    "Name": asset.name or asset.ticker,
+                                    "Contribution_to_Portfolio": direct_weight,
+                                    "ETF_Source": "DIRECT",
+                                }
+                            ]
+                        ),
+                    ],
+                    ignore_index=True,
+                )
+
+        # Sort by contribution
+        aggregated = aggregated.sort_values(
+            "Contribution_to_Portfolio", ascending=False
+        )
+        aggregated = aggregated.rename(
+            columns={
+                "Contribution_to_Portfolio": "Portfolio_Weight",
+                "ETF_Source": "Sources",
+            }
+        )
+
+        lookthrough_df = aggregated
+    else:
+        lookthrough_df = pd.DataFrame()
+
+    if etfs_without_data:
+        print(f"\nETF holdings data not available for: {', '.join(etfs_without_data)}")
+
+    asset_plot = SavedPlot(str(asset_path))
+
+    return asset_plot, sector_plot, holdings_df, lookthrough_df
+
+
+def analyze_portfolio_composition(
+    filepath: str = PORTFOLIO_FILE,
+    max_etf_holdings: int = 15,
+) -> Tuple[Optional[SavedPlot], Optional[SavedPlot], pd.DataFrame, pd.DataFrame]:
+    """
+    Main entry point for portfolio analysis.
+
+    Args:
+        filepath: Path to portfolio JSON configuration.
+        max_etf_holdings: Maximum holdings to retrieve per ETF.
+
+    Returns:
+        Tuple of (asset_plot, sector_plot, holdings_df, lookthrough_df).
+    """
+    assets = load_portfolio_config(filepath)
+    return analyze_portfolio_with_assets(assets, max_etf_holdings)
