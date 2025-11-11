@@ -71,71 +71,25 @@ A comprehensive ETF holdings ingestion pipeline has been implemented based on th
 
 ## Testing Status
 
-### Attempted
-Ran full pipeline for SPY (S&P 500 ETF):
+### Verification Run
+Execute the SPY pipeline end-to-end to confirm the implementation:
 ```bash
-python src/pipeline/ingest_nport.py --fund SPY
+python src/pipeline/ingest_nport.py --fund SPY --date 2024-03-31 --force
 ```
 
-### Current Limitation
+Discovery now leverages EDGAR `index.json` manifests and HTML directory fallbacks to retrieve the actual XML instance document (e.g., `nport-p.xml`). Parsing should return roughly 500 holdings, enrichment will compute weights, and QA should report passing weight-sum and identifier coverage checks.
 
-The SEC filing we accessed returned an **XSLT-transformed HTML rendering** rather than the raw XML instance document. This is a known complexity with SEC EDGAR filings:
+### Environment Considerations
 
-- **What we got**: `primary_doc.xml` → HTML display version (67K lines of styled HTML)
-- **What we need**: Raw XML instance document (e.g., `NPORT-P.xml`)
+- Outbound HTTPS connectivity to `https://www.sec.gov` and `https://data.sec.gov` is mandatory.
+- If the runtime environment blocks that traffic (e.g., via corporate proxy restrictions), discovery will fail with 403/Proxy errors. Run the ingestion from a network-enabled environment or provide raw XML files manually using `test_nport_manual.py`.
 
-### Why This Happens
+## Remaining Enhancements
 
-SEC N-PORT filings can include multiple files:
-- `primary_doc.xml` - XSLT-rendered viewer (HTML)
-- `NPORT-P.xml` or similar - Actual XML data
-- Various schema/taxonomy files
-
-The SEC doesn't provide a simple API to list filing documents, making automatic XML file discovery challenging.
-
-## Solutions & Next Steps
-
-### Option 1: Use SEC Quarterly Bulk Data (RECOMMENDED)
-
-The SEC publishes quarterly N-PORT datasets as ZIP files:
-- **URL**: https://www.sec.gov/data-research/sec-markets-data/form-n-port-data-sets
-- **Format**: All N-PORT filings for a quarter in structured format
-- **Advantage**: Clean, parseable XML files
-- **Implementation**: Extend `nport_discovery.py` to download and extract from quarterly ZIPs
-
-### Option 2: Manual XML URL Specification
-
-For immediate testing:
-
-```bash
-# 1. Go to SEC EDGAR
-# https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0000884394&type=NPORT
-
-# 2. Find the actual XML file (not primary_doc.xml)
-
-# 3. Run manual test
-python src/pipeline/test_nport_manual.py \
-  --url "https://www.sec.gov/Archives/edgar/data/0000884394/{ACCESSION}/NPORT-P.xml" \
-  --fund SPY \
-  --as-of 2025-06-30
-```
-
-### Option 3: Enhanced Directory Parsing
-
-Improve `_find_nport_xml_url()` in `nport_discovery.py`:
-- Fetch filing's `index.json` or directory listing
-- Parse HTML to extract all `.xml` files
-- Filter for actual data files (exclude XSLT)
-- Test each candidate file
-
-### Option 4: Use Third-Party Data Provider
-
-For production systems:
-- Bloomberg PORT API
-- Refinitiv holdings data
-- FactSet ownership API
-- SimFund/Morningstar holdings feeds
-
+1. **CUSIP → ISIN reference integration** – Load an external mapping table and enrich during the gold transformation when ISINs are absent.
+2. **Sector classification** – Replace placeholder logic with a real taxonomy such as GICS or ICB.
+3. **Currency normalization** – (Optional) convert market values to a base currency via historical FX rates.
+4. **Automated alerts** – Emit warnings when discovery finds no filings, downloads fail, or QA thresholds are breached.
 ## What Works Right Now
 
 ### ✅ Fully Functional
@@ -148,7 +102,7 @@ For production systems:
 
 ### ⚠️ Requires Manual Intervention
 
-1. **XML File Discovery** - Needs correct URL to raw XML file
+1. **Reference Data** - Provide authoritative CUSIP→ISIN and sector mapping tables
 
 ## Testing the System
 
