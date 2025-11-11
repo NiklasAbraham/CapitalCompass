@@ -45,7 +45,9 @@ Thumbs.db
 *.csv
 *.xlsx
 *.parquet
-data/
+data/*
+!data/pipeline/
+!data/pipeline/**
 cache/
 
 # Plots

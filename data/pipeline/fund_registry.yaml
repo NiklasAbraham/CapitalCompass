@@ -1,0 +1,41 @@
+funds:
+  US4642874576:
+    fund_id: US4642874576
+    issuer: iShares
+    name: iShares MSCI World ETF
+    domicile: US
+    share_class_isin: US4642874576
+    gold_path: fund_id=US4642874576
+    default_as_of: 2024-03-29
+    tickers:
+      - URTH
+  IE00BKM4GZ66:
+    fund_id: IE00BKM4GZ66
+    issuer: iShares
+    name: iShares MSCI EM IMI ESG Screened UCITS ETF
+    domicile: IE
+    share_class_isin: IE00BKM4GZ66
+    gold_path: fund_id=IE00BKM4GZ66
+    default_as_of: 2024-03-29
+    tickers:
+      - IMAE.AS
+  LU0659580072:
+    fund_id: LU0659580072
+    issuer: Xtrackers
+    name: Xtrackers STOXX Europe 600 UCITS ETF
+    domicile: LU
+    share_class_isin: LU0659580072
+    gold_path: fund_id=LU0659580072
+    default_as_of: 2024-03-29
+    tickers:
+      - XEOND.XD
+  LU0635178014:
+    fund_id: LU0635178014
+    issuer: Amundi
+    name: Amundi Multi-Asset Conservative Portfolio
+    domicile: LU
+    share_class_isin: LU0635178014
+    gold_path: fund_id=LU0635178014
+    default_as_of: 2024-03-29
+    tickers:
+      - CEBE.DE

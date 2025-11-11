@@ -36,6 +36,7 @@ def format_currency(value: float) -> str:
 def run_simple_portfolio_analysis(
     config_path: str = PORTFOLIO_FILE,
     max_etf_holdings: int = 15,
+    holdings_source: str = "primary",
 ) -> Dict[str, object]:
     """
     Run portfolio analysis and display results.
@@ -43,6 +44,8 @@ def run_simple_portfolio_analysis(
     Args:
         config_path: Path to portfolio configuration JSON.
         max_etf_holdings: Maximum holdings to retrieve per ETF.
+        holdings_source: Holdings backend to use for ETF look-through
+            (``"primary"``, ``"auto"``, ``"alpha_vantage"``, or ``"yahoo"``).
 
     Returns:
         Dictionary with analysis results.
@@ -52,11 +55,14 @@ def run_simple_portfolio_analysis(
         config_path = str(PROJECT_ROOT / config_path)
 
     # Load and display portfolio configuration
-    assets = load_portfolio_config(config_path)
+    assets = load_portfolio_config(
+        config_path, holdings_source_override=holdings_source
+    )
 
     print("=" * 50)
     print("Current Portfolio Configuration:")
     print("=" * 50)
+    print(f"ETF holdings source: {holdings_source.upper()}")
 
     for asset in assets:
         if asset.weight is not None:
@@ -73,6 +79,7 @@ def run_simple_portfolio_analysis(
         analyze_portfolio_composition(
             filepath=config_path,
             max_etf_holdings=max_etf_holdings,
+            holdings_source_override=holdings_source,
         )
     )
 

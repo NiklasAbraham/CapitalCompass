@@ -50,12 +50,17 @@ def _portfolio_signature(assets: List[Asset]) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def load_portfolio_config(filepath: str) -> List[Asset]:
+def load_portfolio_config(
+    filepath: str,
+    holdings_source_override: Optional[str] = None,
+) -> List[Asset]:
     """
     Load portfolio configuration and create Asset objects.
 
     Args:
         filepath: Path to portfolio JSON file.
+        holdings_source_override: Optional override for ETF holdings source
+            (``"primary"``, ``"auto"``, ``"alpha_vantage"``, or ``"yahoo"``).
 
     Returns:
         List of Asset objects (Stock or ETF instances).
@@ -75,7 +80,17 @@ def load_portfolio_config(filepath: str) -> List[Asset]:
         weight = item.get("weight") or item.get("percentage")
 
         if asset_type == "etf":
-            asset = ETF(ticker=ticker, units=units, weight=weight)
+            holdings_source = (
+                item.get("holdings_source")
+                or holdings_source_override
+                or "auto"
+            )
+            asset = ETF(
+                ticker=ticker,
+                units=units,
+                weight=weight,
+                holdings_source=holdings_source,
+            )
         else:
             asset = Stock(ticker=ticker, units=units, weight=weight)
 
@@ -375,6 +390,7 @@ def analyze_portfolio_with_assets(
 def analyze_portfolio_composition(
     filepath: str = PORTFOLIO_FILE,
     max_etf_holdings: int = 15,
+    holdings_source_override: Optional[str] = None,
 ) -> Tuple[Optional[SavedPlot], Optional[SavedPlot], pd.DataFrame, pd.DataFrame]:
     """
     Main entry point for portfolio analysis.
@@ -382,11 +398,15 @@ def analyze_portfolio_composition(
     Args:
         filepath: Path to portfolio JSON configuration.
         max_etf_holdings: Maximum holdings to retrieve per ETF.
+        holdings_source_override: Override holdings source for ETFs
+            (``"primary"``, ``"auto"``, ``"alpha_vantage"``, or ``"yahoo"``).
 
     Returns:
         Tuple of (asset_plot, sector_plot, holdings_df, lookthrough_df).
     """
-    assets = load_portfolio_config(filepath)
+    assets = load_portfolio_config(
+        filepath, holdings_source_override=holdings_source_override
+    )
     return analyze_portfolio_with_assets(assets, max_etf_holdings)
 
 
