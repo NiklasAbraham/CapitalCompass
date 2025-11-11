@@ -55,7 +55,7 @@ Discovers N-PORT filings from SEC EDGAR for a given CIK.
 - Queries SEC submissions API
 - Filters for NPORT-P and NPORT-EX forms
 - Date range filtering
-- Attempts to locate actual XML files (not HTML renderings)
+- Resolves actual XML instance documents using EDGAR `index.json` manifests
 
 ### 2. `nport_download.py`
 Downloads filings with polite rate limiting and retry logic.
@@ -136,6 +136,29 @@ python src/pipeline/ingest_nport.py --fund SPY --force
 # Backfill historical data
 python src/pipeline/ingest_nport.py --fund SPY --date 2024-09-30
 ```
+
+## Verification Checklist
+
+Follow these steps to validate that discovery, download, parsing, enrichment, and QA all succeed for a real-world filing such as SPY:
+
+1. **Fetch a known-good filing**
+   ```bash
+   python src/pipeline/ingest_nport.py --fund SPY --date 2024-03-31 --force
+   ```
+   This runs the full pipeline and forces a redownload of the targeted quarter, ensuring discovery resolves the true XML instance document.
+
+2. **Confirm raw artifacts**
+   - Check `data/raw/sec/cik=0000884394/` for a subdirectory named after the accession number (with dashes) containing the XML file rather than `primary_doc.xml`.
+   - Inspect `metadata.json` for the `downloaded_url` field pointing at an `nport-p*.xml` asset.
+
+3. **Inspect parsed holdings**
+   - Silver output should contain roughly 500 rows for SPY in `data/pipeline/silver_holdings/fund_id=SPY/`.
+   - Gold output should mirror the same count with calculated weights.
+
+4. **Review QA report**
+   - Open `data/qa/fund_id=SPY/<as_of>/qa_report.json` and ensure weight-sum and identifier coverage checks report success.
+
+If any step fails—especially if the raw XML is missing or malformed—rerun the ingestion with `--force` and consult the logs under `logs/nport_ingest.log`.
 
 ### From Python
 

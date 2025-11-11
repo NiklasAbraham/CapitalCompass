@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+import os
 from pathlib import Path
 from typing import Optional
 import requests
@@ -13,7 +14,10 @@ import requests
 class NPORTDownloader:
     """Download N-PORT XML files from SEC EDGAR."""
     
-    USER_AGENT = "CapitalCompass/1.0 (research tool; contact@example.com)"
+    DEFAULT_USER_AGENT = (
+        "CapitalCompassBot/1.0 (gpt-5-codex; support@capitalcompass.ai)"
+    )
+    USER_AGENT = os.environ.get("SEC_USER_AGENT", DEFAULT_USER_AGENT)
     REQUEST_DELAY = 0.15  # 150ms between requests
     MAX_RETRIES = 3
     RETRY_BACKOFF = 2.0  # Exponential backoff multiplier
