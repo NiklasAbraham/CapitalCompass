@@ -1,4 +1,17 @@
 funds:
+  SPY:
+    fund_id: SPY
+    cik: "0000884394"
+    series_id: "S000000593"
+    class_id: "C000000664"
+    issuer: State Street
+    name: SPDR S&P 500 ETF Trust
+    domicile: US
+    share_class_isin: US78462F1030
+    gold_path: fund_id=SPY
+    freshness_days: 30
+    tickers:
+      - SPY
   US4642874576:
     fund_id: US4642874576
     issuer: iShares
