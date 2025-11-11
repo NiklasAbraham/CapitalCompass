@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+from numbers import Number
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Optional, List
 import pandas as pd
+import numpy as np
 
 
 @dataclass
@@ -27,7 +29,7 @@ class QAResult:
     
     def to_dict(self) -> dict:
         """Convert to dictionary."""
-        return asdict(self)
+        return _make_json_safe(asdict(self))
 
 
 class NPORTQualityAssurance:
@@ -194,4 +196,17 @@ class NPORTQualityAssurance:
             print("\nFailed checks:")
             for check in result.checks_failed:
                 print(f"  ✗ {check}")
+
+
+def _make_json_safe(value):
+    """Recursively convert numpy and pandas types to JSON-serialisable Python types."""
+    if isinstance(value, dict):
+        return {str(key): _make_json_safe(val) for key, val in value.items()}
+    if isinstance(value, list):
+        return [_make_json_safe(item) for item in value]
+    if isinstance(value, (np.generic,)):
+        return value.item()
+    if isinstance(value, Number):
+        return float(value) if isinstance(value, float) else int(value)
+    return value
 

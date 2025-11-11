@@ -286,8 +286,7 @@ class NPORTDiscovery:
                 href_lower = href.lower()
                 if not href_lower.endswith(".xml"):
                     continue
-
-                if "primary_doc" in href_lower or href_lower.endswith(".xsl.xml"):
+                if href_lower.endswith(".xsl.xml"):
                     continue
 
                 content_type = (item.get("type") or "").lower()
@@ -305,6 +304,8 @@ class NPORTDiscovery:
                     score += 40
                 if href_lower.endswith(".xml"):
                     score += 10
+                if "primary_doc" in href_lower:
+                    score += 60
                 if size_hint > 0:
                     score += min(size_hint // 10000, 20)
                 if seq > 0:

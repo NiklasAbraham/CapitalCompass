@@ -124,8 +124,12 @@ class NPORTIngestionPipeline:
                     return True
         
         # Discover filings
-        from_date = target_date if target_date else date.today() - timedelta(days=90)
-        to_date = target_date if target_date else date.today()
+        if target_date:
+            from_date = target_date - timedelta(days=365)
+            to_date = target_date + timedelta(days=365)
+        else:
+            from_date = date.today() - timedelta(days=120)
+            to_date = date.today()
         
         filings = self.discovery.discover_filings(
             cik=cik,
@@ -139,37 +143,84 @@ class NPORTIngestionPipeline:
             print(f"No N-PORT filings found for CIK {cik}")
             return False
         
-        # Process the most recent filing
-        filing = filings[-1]
-        print(f"\nProcessing filing:")
-        print(f"  Accession: {filing.accession}")
-        print(f"  Filing date: {filing.filing_date.strftime('%Y-%m-%d')}")
-        print(f"  URL: {filing.primary_doc_url}")
-        
-        # Download
-        xml_path = self.downloader.download_filing(
-            url=filing.primary_doc_url,
-            cik=filing.cik,
-            accession=filing.accession,
-            as_of_date=filing.as_of_date.strftime('%Y-%m-%d'),
-        )
-        
-        if not xml_path or not xml_path.exists():
-            print("Download failed")
+        def _filing_sort_key(filing: FilingMetadata):
+            if target_date:
+                return (
+                    abs((filing.as_of_date.date() - target_date).days),
+                    -int(filing.filing_date.timestamp()),
+                )
+            return (-int(filing.filing_date.timestamp()),)
+
+        sorted_filings = sorted(filings, key=_filing_sort_key)
+        expected_series = fund_config.get("series_id")
+        expected_class = fund_config.get("class_id")
+
+        selected_filing: Optional[FilingMetadata] = None
+        parsed_metadata = None
+        holdings = None
+        xml_path: Optional[Path] = None
+
+        for candidate in sorted_filings:
+            print(f"\nProcessing filing:")
+            print(f"  Accession: {candidate.accession}")
+            print(f"  Filing date: {candidate.filing_date.strftime('%Y-%m-%d')}")
+            print(f"  URL: {candidate.primary_doc_url}")
+
+            # Download
+            xml_path = self.downloader.download_filing(
+                url=candidate.primary_doc_url,
+                cik=candidate.cik,
+                accession=candidate.accession,
+                as_of_date=candidate.as_of_date.strftime('%Y-%m-%d'),
+            )
+
+            if not xml_path or not xml_path.exists():
+                print("Download failed; trying next filing (if available)")
+                continue
+
+            holdings, metadata = self.parser.parse_filing(
+                xml_path=xml_path,
+                fund_id=fund_id,
+                source_url=candidate.primary_doc_url,
+            )
+
+            filing_series = metadata.get("series_id")
+            filing_classes = metadata.get("class_ids") or []
+
+            if expected_series and filing_series and filing_series != expected_series:
+                print(
+                    f"Skipping filing {candidate.accession} "
+                    f"(series_id={filing_series}) – expected {expected_series}"
+                )
+                xml_path.unlink(missing_ok=True)
+                continue
+
+            if expected_class and filing_classes and expected_class not in filing_classes:
+                print(
+                    f"Skipping filing {candidate.accession} "
+                    f"(class_ids={', '.join(filing_classes)}) – expected {expected_class}"
+                )
+                xml_path.unlink(missing_ok=True)
+                continue
+
+            if not holdings:
+                print(
+                    f"No holdings extracted from filing {candidate.accession}; trying next"
+                )
+                xml_path.unlink(missing_ok=True)
+                continue
+
+            selected_filing = candidate
+            parsed_metadata = metadata
+            break
+
+        if not selected_filing or not parsed_metadata or holdings is None:
+            print("Unable to find a filing matching the requested series/class criteria.")
             return False
-        
-        # Parse to silver
-        holdings, metadata = self.parser.parse_filing(
-            xml_path=xml_path,
-            fund_id=fund_id,
-            source_url=filing.primary_doc_url,
-        )
-        
-        if not holdings:
-            print("No holdings extracted from filing")
-            return False
-        
-        as_of_date = metadata['as_of']
+
+        filing = selected_filing
+        metadata = parsed_metadata
+        as_of_date = metadata["as_of"]
         
         # Save silver holdings
         silver_df = self.parser.to_dataframe(holdings)

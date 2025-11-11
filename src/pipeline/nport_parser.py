@@ -91,16 +91,41 @@ class NPORTParser:
         for holding in holdings:
             holding.parse_hash = parse_hash
         
+        series_info = self._extract_series_info(root)
+
         metadata = {
             "as_of": as_of_date,
             "fund_id": fund_id,
             "n_holdings": len(holdings),
             "parse_hash": parse_hash,
             "source_file": str(xml_path),
+            "series_id": series_info.get("series_id"),
+            "series_name": series_info.get("series_name"),
+            "class_ids": series_info.get("class_ids"),
         }
         
         print(f"Extracted {len(holdings)} holdings")
         return holdings, metadata
+    
+    def _extract_series_info(self, root: ET.Element) -> dict:
+        """Extract series and class identifiers from the filing."""
+        info = {"series_id": None, "series_name": None, "class_ids": []}
+
+        series_id_elem = root.find(".//nport:seriesId", self.NAMESPACES)
+        if series_id_elem is not None and series_id_elem.text:
+            info["series_id"] = series_id_elem.text.strip()
+
+        series_name_elem = root.find(".//nport:seriesName", self.NAMESPACES)
+        if series_name_elem is not None and series_name_elem.text:
+            info["series_name"] = series_name_elem.text.strip()
+
+        class_id_elems = root.findall(".//nport:seriesClassInfo/nport:classId", self.NAMESPACES)
+        class_ids: List[str] = []
+        for elem in class_id_elems:
+            if elem.text:
+                class_ids.append(elem.text.strip())
+        info["class_ids"] = class_ids
+        return info
     
     def _extract_report_date(self, root: ET.Element) -> Optional[str]:
         """Extract the report date from N-PORT filing.
@@ -114,7 +139,7 @@ class NPORTParser:
         # Try multiple possible locations for the report date
         
         # Method 1: Look for reportingPeriodEndDate or repPdEnded
-        for tag in ['reportingPeriodEndDate', 'repPdEnded', 'reportDate']:
+        for tag in ['reportingPeriodEndDate', 'repPdEnded', 'reportDate', 'repPdDate', 'reportDt']:
             for ns_prefix in ['', 'ns1:', 'nport:']:
                 elements = root.findall(f".//{ns_prefix}{tag}", self.NAMESPACES)
                 if elements and elements[0].text:
@@ -132,6 +157,18 @@ class NPORTParser:
                 if elem.text:
                     try:
                         dt = datetime.strptime(elem.text.strip(), "%Y-%m-%d")
+                        return dt.strftime("%Y-%m-%d")
+                    except ValueError:
+                        continue
+
+        # Method 3: Search for ISO date strings within header/formData sections
+        for elem in root.findall(".//nport:formData", self.NAMESPACES):
+            text_content = "".join(elem.itertext())
+            for token in text_content.split():
+                if len(token) >= 10:
+                    candidate = token[:10]
+                    try:
+                        dt = datetime.strptime(candidate, "%Y-%m-%d")
                         return dt.strftime("%Y-%m-%d")
                     except ValueError:
                         continue

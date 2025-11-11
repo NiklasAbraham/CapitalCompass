@@ -52,3 +52,16 @@ funds:
     default_as_of: 2024-03-29
     tickers:
       - CEBE.DE
+  VOO:
+    fund_id: VOO
+    cik: "0000036405"
+    series_id: "S000002839"
+    class_id: "C000170274"
+    issuer: Vanguard
+    name: Vanguard 500 Index Fund ETF Shares
+    domicile: US
+    share_class_isin: US9229083632
+    gold_path: fund_id=VOO
+    freshness_days: 30
+    tickers:
+      - VOO
