@@ -23,13 +23,13 @@ Represents individual stocks:
 - Returns `None` for `get_holdings()` (stocks are atomic)
 
 #### ETF Class (`etf.py`)
-Represents Exchange-Traded Funds with deep look-through capability:
-- Primary data source: **Financial Modeling Prep (FMP)** for holdings, country, sector, and asset allocation data
-- Secondary data source: **AlphaVantage** for holdings if FMP is unavailable or rate-limited
-- Final fallback: Yahoo Finance `funds_data` for basic holdings snapshots
+- Represents Exchange-Traded Funds with deep look-through capability:
+- Preferred data source: **Primary holdings pipeline** (issuer CSV/XLSX and SEC N-PORT snapshots stored under `data/pipeline/`)
+- Secondary data source: **AlphaVantage** for live holdings when the pipeline lacks coverage
+- Final safety net: Yahoo Finance `funds_data` for truncated holdings snapshots
 - Automatically excludes money-market and bond funds from look-through (configurable keywords)
 - Caches API responses per instance to reduce duplicate network calls
-- Enriches metadata (issuer, AUM, expense ratio) via FMP overview data
+- Enriches metadata using pipeline provenance where available and Yahoo Finance fundamentals otherwise
 - Provides performance metrics (YTD return, multi-year averages, expense ratio) via Yahoo Finance
 
 ### 2. API Integrations
@@ -43,15 +43,11 @@ Provides access to AlphaVantage API:
 - **Company Overview**: `get_company_overview()` for fundamentals
 - Configuration: API key stored in `.env` file (see `.env.example`)
 
-#### Financial Modeling Prep Client (`fmp.py`)
-Provides access to FMP’s funds, quote, and profile endpoints with key rotation and endpoint fallbacks:
-- **ETF Holdings**: `get_etf_holdings()` (`stable/etf/holdings` → `api/v3/etf/holdings`)
-- **Country Allocation**: `get_etf_country_weights()` (`stable/etf/country-weightings` → `api/v3/etf-country-weightings`)
-- **Sector Allocation**: `get_etf_sector_weights()` (`stable/etf/sector-weightings` → `api/v3/etf-sector-weightings`)
-- **Asset Allocation**: `get_etf_asset_allocation()` (`stable/etf/asset-allocation` → `api/v3/etf-asset-allocation`)
-- **ETF Overview**: `get_etf_overview()` combines information from `stable/etf/information`, `stable/etf/profile`, and `api/v3/etf-profile`
-- **Quotes / Profiles**: `get_quote()` and `get_company_profile()` reuse the broader equity endpoints (`stable/quote`, `stable/profile`)
-- All responses log the final URL and key index; `Information` / `Note` rate-limit messages trigger automatic key rotation
+#### Primary Holdings Client (`pipeline/primary_holdings.py`)
+Local client that reads deterministic issuer/SEC gold snapshots stored under `data/pipeline/`:
+- Resolves ETF tickers to canonical fund identifiers via `fund_registry.yaml`
+- Normalises holdings schema (weights, quantities, currencies) with provenance metadata
+- Provides helper methods to aggregate country/sector/asset-class exposures directly from gold holdings
 
 ### 3. Portfolio Analysis
 
@@ -68,7 +64,7 @@ Uses asset classes for portfolio composition analysis:
 Standalone script for current portfolio overview:
 - Displays portfolio configuration
 - Generates asset allocation charts (PNG)
-- Performs ETF look-through via FMP → AlphaVantage → Yahoo Finance fallbacks
+- Performs ETF look-through via the primary holdings pipeline → AlphaVantage → Yahoo Finance fallbacks
 - Shows aggregated exposure (direct + indirect holdings)
 - Computes portfolio-level ETF country/sector/asset-class exposures and stores CSV artefacts
 - Prints ETF performance metrics
@@ -82,7 +78,7 @@ Standalone script for current portfolio overview:
    ↓
 3. Market Data Fetched (Yahoo Finance)
    ↓
-4. ETF Holdings & Exposures Retrieved (FMP → AlphaVantage → Yahoo Finance fallback)
+4. ETF Holdings & Exposures Retrieved (Primary pipeline → AlphaVantage → Yahoo Finance fallback)
    ↓
 5. Analysis, Exposure Aggregation & Visualization
    ↓
@@ -120,33 +116,37 @@ Standalone script for current portfolio overview:
 Create a `.env` file in project root containing API credentials. Multiple keys can be added for automatic rotation:
 
 ```bash
-# Financial Modeling Prep (primary ETF data source)
-FMP_API_KEY=your_primary_fmp_key
-FMP_API_KEY_1=your_secondary_fmp_key
-
-# AlphaVantage (fallback ETF data source)
 ALPHAVANTAGE_API_KEY=your_primary_alpha_key
 ALPHAVANTAGE_API_KEY_1=your_secondary_alpha_key
 ```
 
-- FMP keys: https://site.financialmodelingprep.com/
 - AlphaVantage keys: https://www.alphavantage.co/support/#api-key
+
+## Primary Holdings Artifacts
+
+- Location: `data/pipeline/`
+  - `fund_registry.yaml` maps tickers to canonical fund identifiers and issuer metadata
+  - `gold_holdings/fund_id=…/as_of=YYYY-MM-DD/version=N/holdings.csv` stores deterministic, provenance-rich snapshots
+- Access: `PrimaryHoldingsClient` normalises weights, symbols, and metadata and is used automatically when
+  `holdings_source="primary"` or the global override requests it
+- Semantics: files preserve as-filed weights, currencies, and lineage fields (`source`, `source_url`, `source_doc_id`)
+  allowing deterministic replays and auditability
 
 ## ETF Data Strategy
 
 1. **Holdings Priority**
-   - **Financial Modeling Prep** (`stable/etf/holdings` → `api/v3/etf/holdings`)
-   - **AlphaVantage** (`ETF_PROFILE`) if FMP is unavailable or rate-limited
-   - **Yahoo Finance** (`funds_data.top_holdings`) as final fallback
-   - Money-market and bond-style ETFs are excluded automatically using keyword heuristics
+   - **Primary pipeline**: reads deterministic gold snapshots (`data/pipeline/gold_holdings/fund_id=…/as_of=…/version=…`) via `PrimaryHoldingsClient`
+   - **AlphaVantage** (`ETF_PROFILE`) when a pipeline snapshot is missing
+   - **Yahoo Finance** (`funds_data.top_holdings`) as the final fallback for truncated snapshots
+   - Money-market and bond-style ETFs are still excluded automatically using keyword heuristics
 
 2. **Exposure Priority**
-   - FMP country, sector, and asset allocation endpoints supply granular weights
-   - Portfolio weights scale each ETF exposure to produce aggregate country/sector/asset-class views
+   - Primary pipeline holdings aggregate to portfolio-level country / sector / asset-class exposures when metadata exists
+   - Exposure gaps are reported so new pipeline snapshots can be prioritised
    - Weight-only portfolios cache aggregated exposure CSVs using a hash signature to avoid redundant API calls
 
 3. **Metadata Augmentation**
-   - FMP overview endpoints provide issuer, focus, AUM, and expense ratio data when available
+   - Pipeline metadata (issuer, fund ID, as-of, version, source document) is attached to each ETF instance when available
    - Yahoo Finance supplements performance statistics (YTD, 3Y, 5Y) and fund descriptors
 
 ## Future Enhancements
@@ -168,28 +168,24 @@ Simply extend the `Asset` base class and implement `fetch_data()` and `get_holdi
 
 ## Best Practices
 
-1. **API Rate Limits**: FMP free tiers vary by plan; AlphaVantage free tier allows 25 calls/day. Both clients rotate across available keys and log rate-limit notices—add multiple keys in `.env` when possible.
+1. **API Rate Limits**: AlphaVantage free tier allows 25 calls/day. Keys rotate across available values—add multiple keys in `.env` when possible.
 
 2. **Portfolio Updates**: Run `simple_portfolio_analysis.py` to get current snapshot. For daily tracking, schedule runs outside trading hours.
 
-3. **Data Quality**: FMP generally provides the deepest ETF datasets (holdings, exposures). AlphaVantage bridges gaps. Yahoo Finance is a last resort and may omit many international funds.
+3. **Data Quality**: The issuer/SEC pipeline is authoritative but only covers registered funds; AlphaVantage bridges gaps. Yahoo Finance is a last resort and may omit many international funds.
 
 4. **Configuration Management**: Use separate JSON files for different portfolios (`config_personal.json`, `config_retirement.json`, etc.).
 
 ## Troubleshooting
-
-### "FMP API key not found"
-- Ensure `.env` file exists in project root
-- Verify `FMP_API_KEY` (and optional numbered variants) are defined without quotes
-- Restart the session after editing `.env` so environment variables reload
 
 ### "AlphaVantage API key not found"
 - Confirm fallback keys (`ALPHAVANTAGE_API_KEY`, `ALPHAVANTAGE_API_KEY_1`, …) are present
 - Remove extraneous whitespace or quote characters
 
 ### "No holdings data for [ETF]"
-- Some ETFs are premium-only on FMP; AlphaVantage will be tried next automatically
-- European or synthetic ETFs may not be covered by either API—Yahoo Finance fallback will attempt a truncated snapshot
+- Confirm the ticker is mapped in `data/pipeline/fund_registry.yaml` when using the primary pipeline
+- Ensure your AlphaVantage key is valid; the client falls back to Yahoo Finance when API data is unavailable
+- European or synthetic ETFs may not be covered by either source—Yahoo Finance fallback will attempt a truncated snapshot
 - Money market / bond ETFs are intentionally excluded from look-through to avoid spurious exposures
 
 ### "No country/sector/asset allocation data for [ETF]"
@@ -208,8 +204,7 @@ Simply extend the `Asset` base class and implement `fetch_data()` and `get_holdi
 src/
 ├── api/
 │   ├── __init__.py
-│   ├── alpha_vantage.py      # AlphaVantage API client
-│   └── fmp.py                # Financial Modeling Prep API client
+│   └── alpha_vantage.py      # AlphaVantage API client
 ├── core/
 │   ├── assets/
 │   │   ├── __init__.py

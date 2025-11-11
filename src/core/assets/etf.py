@@ -1,22 +1,29 @@
 """
-ETF asset class with FMP and AlphaVantage integration.
+ETF asset class with issuer/SEC pipeline and AlphaVantage integration.
 """
 
-from typing import Dict, Optional, List
+from typing import Dict, Optional
+
 import pandas as pd
 import yfinance as yf
+
 from .base import Asset
 
-# Conditional imports for API clients
+# Conditional import for AlphaVantage client
 try:
-    from api.fmp import FMPClient
     from api.alpha_vantage import AlphaVantageClient
 except ImportError:
     import sys
     from pathlib import Path
+
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from api.fmp import FMPClient
     from api.alpha_vantage import AlphaVantageClient
+
+try:  # Local primary holdings pipeline (optional)
+    from pipeline import PrimaryHoldingsClient, PrimaryHoldingsError
+except ImportError:  # pragma: no cover - optional dependency path
+    PrimaryHoldingsClient = None  # type: ignore
+    PrimaryHoldingsError = Exception  # type: ignore
 
 
 class ETF(Asset):
@@ -39,8 +46,9 @@ class ETF(Asset):
         ticker: str,
         units: float = 0,
         weight: Optional[float] = None,
-        use_fmp: bool = True,
         use_alpha_vantage: bool = True,
+        holdings_source: str = "auto",
+        primary_holdings_client: Optional["PrimaryHoldingsClient"] = None,
     ):
         """
         Initialize an ETF.
@@ -49,20 +57,32 @@ class ETF(Asset):
             ticker: ETF ticker symbol.
             units: Number of shares held.
             weight: Portfolio weight as decimal.
-            use_fmp: Whether to use FMP for holdings data (tried first).
-            use_alpha_vantage: Whether to use AlphaVantage for holdings data (tried after FMP).
+            use_alpha_vantage: Whether to use AlphaVantage for holdings data (fallback).
+            holdings_source: Preferred holdings source: ``"auto"`` (default),
+                ``"primary"`` to use only the issuer/SEC pipeline, ``"alpha_vantage"``
+                to skip the pipeline, or ``"yahoo"`` for Yahoo Finance only. The
+                legacy value ``"fmp"`` is treated as ``"auto"`` for backwards
+                compatibility.
+            primary_holdings_client: Optional injected pipeline client (primarily for testing).
         """
         super().__init__(ticker, units, weight)
         self._yf_ticker: Optional[yf.Ticker] = None
-        self._use_fmp = use_fmp
-        self._use_alpha_vantage = use_alpha_vantage
-        self._fmp_client: Optional[FMPClient] = None
+        normalized_source = (holdings_source or "auto").lower()
+        if normalized_source == "fmp":
+            normalized_source = "auto"
+        if normalized_source not in {"auto", "primary", "alpha_vantage", "yahoo"}:
+            normalized_source = "auto"
+        self._holdings_source = normalized_source
+        self._use_alpha_vantage = use_alpha_vantage or self._holdings_source == "alpha_vantage"
         self._av_client: Optional[AlphaVantageClient] = None
         self._is_excluded_type = False
         self._country_allocation: Optional[pd.DataFrame] = None
         self._sector_allocation: Optional[pd.DataFrame] = None
         self._asset_allocation: Optional[pd.DataFrame] = None
-        self._fmp_overview: Optional[Dict[str, object]] = None
+        self._primary_client: Optional["PrimaryHoldingsClient"] = primary_holdings_client
+        self._primary_holdings_full: Optional[pd.DataFrame] = None
+        self._primary_metadata: Optional[Dict[str, object]] = None
+        self._primary_error: Optional[str] = None
 
     def fetch_data(self) -> bool:
         """
@@ -109,28 +129,6 @@ class ETF(Asset):
                 "inception_date": info.get("fundInceptionDate"),
             }
 
-            # Supplement with FMP overview data if available
-            if self._use_fmp:
-                fmp_overview = self.get_fmp_overview()
-                if fmp_overview:
-                    self._fmp_overview = fmp_overview
-                    category = fmp_overview.get("category")
-                    if category and (not self._sector or self._sector == "ETF"):
-                        self._sector = category
-                    self._metadata.update(
-                        {
-                            "issuer": fmp_overview.get("issuer")
-                            or self._metadata.get("issuer"),
-                            "expense_ratio": fmp_overview.get("expense_ratio")
-                            or self._metadata.get("expense_ratio"),
-                            "inception_date": fmp_overview.get("inception_date")
-                            or self._metadata.get("inception_date"),
-                            "total_assets": fmp_overview.get("aum")
-                            or self._metadata.get("total_assets"),
-                            "description": fmp_overview.get("description"),
-                        }
-                    )
-
             return self._price is not None
 
         except Exception as e:
@@ -138,161 +136,65 @@ class ETF(Asset):
             return False
 
     def get_holdings(self, max_holdings: int = 15) -> Optional[pd.DataFrame]:
-        """
-        Get underlying holdings of the ETF.
-
-        Tries data sources in order: FMP API -> AlphaVantage API -> Yahoo Finance.
-
-        Args:
-            max_holdings: Maximum number of holdings to return.
-
-        Returns:
-            DataFrame with holdings data or None if unavailable.
-        """
+        """Get underlying holdings of the ETF."""
         # Skip holdings lookup for money market and bond funds
         if self._is_excluded_type:
             return None
 
-        # Try FMP first
-        if self._use_fmp:
-            holdings_df = self._get_holdings_fmp(max_holdings)
+        # Try the primary pipeline first when requested
+        if self._holdings_source in {"primary", "auto"}:
+            holdings_df = self._get_holdings_primary(max_holdings)
             if holdings_df is not None:
                 return holdings_df
+            if self._holdings_source == "primary":
+                return None
 
-        # Try AlphaVantage second
-        if self._use_alpha_vantage:
+        # Try AlphaVantage next
+        if self._holdings_source in {"alpha_vantage", "auto"} and self._use_alpha_vantage:
             holdings_df = self._get_holdings_alpha_vantage(max_holdings)
             if holdings_df is not None:
                 return holdings_df
+            if self._holdings_source == "alpha_vantage":
+                return self._get_holdings_yfinance(max_holdings)
+
+        if self._holdings_source == "yahoo":
+            return self._get_holdings_yfinance(max_holdings)
 
         # Fallback to Yahoo Finance
         return self._get_holdings_yfinance(max_holdings)
 
     def get_country_allocation(self) -> Optional[pd.DataFrame]:
-        """Get country allocation via FMP."""
-        if not self._use_fmp:
-            return None
-
-        if self._country_allocation is not None:
-            return self._country_allocation.copy()
-
-        try:
-            if self._fmp_client is None:
-                self._fmp_client = FMPClient()
-            country_df = self._fmp_client.get_etf_country_weights(self.ticker)
-            if country_df is not None and not country_df.empty:
-                self._country_allocation = country_df
-                return country_df.copy()
-        except ValueError as exc:
-            print(f"FMP country allocation error for {self.ticker}: {exc}")
-        except Exception as exc:
-            print(f"Error fetching FMP country allocation for {self.ticker}: {exc}")
+        """Get country allocation using the configured data source."""
+        if self._holdings_source in {"primary", "auto"}:
+            allocations = self._get_primary_exposure("country")
+            if allocations is not None:
+                return allocations
+            if self._holdings_source == "primary":
+                return None
 
         return None
 
     def get_sector_allocation(self) -> Optional[pd.DataFrame]:
-        """Get sector allocation via FMP."""
-        if not self._use_fmp:
-            return None
-
-        if self._sector_allocation is not None:
-            return self._sector_allocation.copy()
-
-        try:
-            if self._fmp_client is None:
-                self._fmp_client = FMPClient()
-            sector_df = self._fmp_client.get_etf_sector_weights(self.ticker)
-            if sector_df is not None and not sector_df.empty:
-                self._sector_allocation = sector_df
-                return sector_df.copy()
-        except ValueError as exc:
-            print(f"FMP sector allocation error for {self.ticker}: {exc}")
-        except Exception as exc:
-            print(f"Error fetching FMP sector allocation for {self.ticker}: {exc}")
+        """Get sector allocation using the configured data source."""
+        if self._holdings_source in {"primary", "auto"}:
+            allocations = self._get_primary_exposure("sector")
+            if allocations is not None:
+                return allocations
+            if self._holdings_source == "primary":
+                return None
 
         return None
 
     def get_asset_allocation(self) -> Optional[pd.DataFrame]:
-        """Get asset class allocation via FMP."""
-        if not self._use_fmp:
-            return None
-
-        if self._asset_allocation is not None:
-            return self._asset_allocation.copy()
-
-        try:
-            if self._fmp_client is None:
-                self._fmp_client = FMPClient()
-            allocation_df = self._fmp_client.get_etf_asset_allocation(self.ticker)
-            if allocation_df is not None and not allocation_df.empty:
-                self._asset_allocation = allocation_df
-                return allocation_df.copy()
-        except ValueError as exc:
-            print(f"FMP asset allocation error for {self.ticker}: {exc}")
-        except Exception as exc:
-            print(f"Error fetching FMP asset allocation for {self.ticker}: {exc}")
+        """Get asset class allocation using the configured data source."""
+        if self._holdings_source in {"primary", "auto"}:
+            allocations = self._get_primary_exposure("asset_class")
+            if allocations is not None:
+                return allocations
+            if self._holdings_source == "primary":
+                return None
 
         return None
-
-    def get_fmp_overview(self) -> Optional[Dict[str, object]]:
-        """Get ETF overview/metadata from FMP."""
-        if not self._use_fmp:
-            return None
-
-        if self._fmp_overview is not None:
-            return self._fmp_overview
-
-        try:
-            if self._fmp_client is None:
-                self._fmp_client = FMPClient()
-            overview = self._fmp_client.get_etf_overview(self.ticker)
-            if overview:
-                self._fmp_overview = overview
-                return overview
-        except ValueError as exc:
-            print(f"FMP overview error for {self.ticker}: {exc}")
-        except Exception as exc:
-            print(f"Error fetching FMP overview for {self.ticker}: {exc}")
-
-        return None
-
-    def _get_holdings_fmp(self, max_holdings: int) -> Optional[pd.DataFrame]:
-        """
-        Get holdings from Financial Modeling Prep API.
-
-        Args:
-            max_holdings: Maximum number of holdings to return.
-
-        Returns:
-            DataFrame with holdings or None if unavailable.
-        """
-        try:
-            if self._fmp_client is None:
-                self._fmp_client = FMPClient()
-
-            holdings_df = self._fmp_client.get_etf_holdings(self.ticker)
-
-            if holdings_df is not None and not holdings_df.empty:
-                # Limit to max holdings
-                holdings_df = holdings_df.head(max_holdings)
-
-                # Ensure we have required columns
-                if "Symbol" not in holdings_df.columns:
-                    holdings_df["Symbol"] = None
-                if "Weight" not in holdings_df.columns:
-                    holdings_df["Weight"] = None
-
-                return holdings_df
-
-            return None
-
-        except ValueError as e:
-            # API key issues or rate limits
-            print(f"FMP error for {self.ticker}: {e}")
-            return None
-        except Exception as e:
-            print(f"Error fetching FMP holdings for {self.ticker}: {e}")
-            return None
 
     def _get_holdings_alpha_vantage(
         self, max_holdings: int
@@ -387,6 +289,76 @@ class ETF(Asset):
         except Exception as e:
             print(f"Error fetching Yahoo Finance holdings for {self.ticker}: {e}")
             return None
+
+    # ------------------------------------------------------------------
+    # Primary pipeline helpers
+    # ------------------------------------------------------------------
+
+    def _ensure_primary_client(self) -> Optional["PrimaryHoldingsClient"]:
+        if self._primary_client is not None or PrimaryHoldingsClient is None:
+            return self._primary_client
+
+        try:
+            self._primary_client = PrimaryHoldingsClient()
+        except Exception as exc:  # pragma: no cover - defensive log
+            self._primary_error = str(exc)
+            print(f"Failed to initialise primary holdings client for {self.ticker}: {exc}")
+            self._primary_client = None
+        return self._primary_client
+
+    def _ensure_primary_holdings(self) -> Optional[pd.DataFrame]:
+        if self._primary_holdings_full is not None:
+            return self._primary_holdings_full
+
+        client = self._ensure_primary_client()
+        if client is None:
+            return None
+
+        try:
+            holdings_df, metadata = client.fetch_holdings(self.ticker)
+        except PrimaryHoldingsError as exc:
+            self._primary_error = str(exc)
+            print(f"Primary holdings error for {self.ticker}: {exc}")
+            return None
+
+        if holdings_df is None or holdings_df.empty:
+            return None
+
+        self._primary_holdings_full = holdings_df
+        self._primary_metadata = metadata
+        self._metadata.setdefault("primary_holdings", {}).update(metadata)
+        return self._primary_holdings_full
+
+    def _get_holdings_primary(self, max_holdings: int) -> Optional[pd.DataFrame]:
+        holdings_full = self._ensure_primary_holdings()
+        if holdings_full is None:
+            return None
+
+        result = holdings_full.copy()
+        if max_holdings:
+            result = result.head(max_holdings).copy()
+            total = result["Weight"].sum()
+            if total and not pd.isna(total):
+                result["Weight"] = result["Weight"] / total
+
+        return result
+
+    def _get_primary_exposure(self, dimension: str) -> Optional[pd.DataFrame]:
+        holdings_full = self._ensure_primary_holdings()
+        if holdings_full is None or holdings_full.empty:
+            return None
+
+        client = self._ensure_primary_client()
+        if client is None:
+            return None
+
+        if dimension == "country":
+            return client.get_country_exposure(holdings_full)
+        if dimension == "sector":
+            return client.get_sector_exposure(holdings_full)
+        if dimension == "asset_class":
+            return client.get_asset_class_exposure(holdings_full)
+        return None
 
     def is_excluded_type(self) -> bool:
         """
