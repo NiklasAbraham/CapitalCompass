@@ -98,7 +98,7 @@ def run_simple_portfolio_analysis(
         print("\nTotal Exposure (Direct + Indirect via ETFs):")
         print("=" * 70)
 
-        display_lookthrough = lookthrough_df.head(22).copy()
+        display_lookthrough = lookthrough_df.copy()
         display_lookthrough["Exposure_Value"] = display_lookthrough[
             "Portfolio_Weight"
         ].apply(format_currency)
@@ -114,6 +114,36 @@ def run_simple_portfolio_analysis(
             display_lookthrough[col] = "-"
 
         print(display_lookthrough[columns_to_show].to_string(index=False))
+
+    # Display ETF exposure summaries (country / sector / asset allocation)
+    exposures = holdings_df.attrs.get("etf_exposures", {})
+    exposure_labels = {
+        "country": ("ETF Country Allocation (Portfolio Level)", "Country"),
+        "sector": ("ETF Sector Allocation (Portfolio Level)", "Sector"),
+        "asset_class": ("ETF Asset-Class Allocation (Portfolio Level)", "Asset_Class"),
+    }
+
+    for key, (title, column_name) in exposure_labels.items():
+        exposure_data = exposures.get(key, {})
+        aggregated_df = exposure_data.get("aggregated")
+
+        if aggregated_df is not None and not aggregated_df.empty:
+            print(f"\n{title}:")
+            display_df = aggregated_df.copy()
+            display_df["Portfolio_Weight"] = display_df["Portfolio_Weight"].apply(
+                format_percentage
+            )
+            columns = [column_name, "Portfolio_Weight", "ETF_Sources"]
+            for col in columns:
+                if col not in display_df.columns:
+                    display_df[col] = "-"
+            print(display_df[columns].to_string(index=False))
+
+        missing_sources = exposure_data.get("missing") or []
+        if missing_sources:
+            print(
+                f"  -> Missing {column_name.lower()} allocation data for: {', '.join(sorted(set(missing_sources)))}"
+            )
 
     # Display ETF details
     etf_details = []
@@ -147,6 +177,7 @@ def run_simple_portfolio_analysis(
         "lookthrough": lookthrough_df,
         "asset_plot": asset_plot,
         "sector_plot": sector_plot,
+        "exposures": exposures,
     }
 
 

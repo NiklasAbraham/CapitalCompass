@@ -116,6 +116,18 @@ class AlphaVantageClient:
                 )
                 data = response.json()
 
+                if "Information" in data:
+                    info_msg = data.get("Information", "")
+                    print(
+                        "AlphaVantage information message received; rotating API key:"
+                        f" {info_msg} (url: {self.last_url})"
+                    )
+                    self._advance_key(key)
+                    last_exception = ValueError(
+                        f"AlphaVantage information: {info_msg} (url: {self.last_url})"
+                    )
+                    continue
+
                 if "Note" in data:
                     # Rate limit hit for this key, rotate to next
                     print(
