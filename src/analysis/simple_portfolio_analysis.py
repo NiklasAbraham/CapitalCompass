@@ -152,6 +152,23 @@ def run_simple_portfolio_analysis(
                 f"  -> Missing {column_name.lower()} allocation data for: {', '.join(sorted(set(missing_sources)))}"
             )
 
+    # Summarize ETF holdings exports with timestamps
+    saved_holdings = holdings_df.attrs.get("etf_holdings", {})
+    if saved_holdings:
+        print("\nETF Holdings Snapshots:")
+        for ticker, payload in sorted(saved_holdings.items()):
+            path = payload.get("path", "-")
+            metadata = payload.get("metadata") or {}
+            as_of = metadata.get("as_of") or "Unknown"
+            source = metadata.get("source") or holdings_source.upper()
+            fetched_at = metadata.get("fetched_at")
+
+            details = [f"source: {source}", f"as_of: {as_of}"]
+            if fetched_at:
+                details.append(f"fetched: {fetched_at}")
+
+            print(f"  {ticker:<8} -> {path} ({'; '.join(details)})")
+
     # Display ETF details
     etf_details = []
     for asset in assets:
@@ -185,6 +202,14 @@ def run_simple_portfolio_analysis(
         "asset_plot": asset_plot,
         "sector_plot": sector_plot,
         "exposures": exposures,
+        "etf_holdings": {
+            ticker: {
+                "data": payload.get("data"),
+                "metadata": payload.get("metadata"),
+                "path": payload.get("path"),
+            }
+            for ticker, payload in saved_holdings.items()
+        },
     }
 
 

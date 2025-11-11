@@ -1,8 +1,7 @@
-"""
-ETF asset class with issuer/SEC pipeline and AlphaVantage integration.
-"""
+"""ETF asset class with issuer/SEC pipeline and AlphaVantage integration."""
 
-from typing import Dict, Optional
+from datetime import datetime
+from typing import Any, Dict, Optional
 
 import pandas as pd
 import yfinance as yf
@@ -83,6 +82,14 @@ class ETF(Asset):
         self._primary_holdings_full: Optional[pd.DataFrame] = None
         self._primary_metadata: Optional[Dict[str, object]] = None
         self._primary_error: Optional[str] = None
+        self._holdings_cache: Dict[str, Optional[pd.DataFrame]] = {}
+        self._last_holdings_fetch: Optional[datetime] = None
+
+    @property
+    def holdings_source(self) -> str:
+        """Return the configured holdings backend."""
+
+        return self._holdings_source
 
     def fetch_data(self) -> bool:
         """
@@ -135,8 +142,13 @@ class ETF(Asset):
             print(f"Error fetching data for ETF {self.ticker}: {e}")
             return False
 
-    def get_holdings(self, max_holdings: int = 15) -> Optional[pd.DataFrame]:
+    def get_holdings(self, max_holdings: Optional[int] = 15) -> Optional[pd.DataFrame]:
         """Get underlying holdings of the ETF."""
+
+        cache_key = "all" if max_holdings is None else str(max_holdings)
+        if cache_key in self._holdings_cache:
+            cached_df = self._holdings_cache[cache_key]
+            return cached_df.copy() if cached_df is not None else None
         # Skip holdings lookup for money market and bond funds
         if self._is_excluded_type:
             return None
@@ -145,7 +157,7 @@ class ETF(Asset):
         if self._holdings_source in {"primary", "auto"}:
             holdings_df = self._get_holdings_primary(max_holdings)
             if holdings_df is not None:
-                return holdings_df
+                return self._store_holdings_in_cache(cache_key, holdings_df)
             if self._holdings_source == "primary":
                 return None
 
@@ -153,15 +165,94 @@ class ETF(Asset):
         if self._holdings_source in {"alpha_vantage", "auto"} and self._use_alpha_vantage:
             holdings_df = self._get_holdings_alpha_vantage(max_holdings)
             if holdings_df is not None:
-                return holdings_df
+                return self._store_holdings_in_cache(cache_key, holdings_df)
             if self._holdings_source == "alpha_vantage":
-                return self._get_holdings_yfinance(max_holdings)
+                yahoo_df = self._get_holdings_yfinance(max_holdings)
+                return self._store_holdings_in_cache(cache_key, yahoo_df)
 
         if self._holdings_source == "yahoo":
-            return self._get_holdings_yfinance(max_holdings)
+            yahoo_df = self._get_holdings_yfinance(max_holdings)
+            return self._store_holdings_in_cache(cache_key, yahoo_df)
 
         # Fallback to Yahoo Finance
-        return self._get_holdings_yfinance(max_holdings)
+        yahoo_df = self._get_holdings_yfinance(max_holdings)
+        return self._store_holdings_in_cache(cache_key, yahoo_df)
+
+    def get_full_holdings(self) -> Optional[pd.DataFrame]:
+        """Return the most complete holdings snapshot available for the ETF."""
+
+        # Prefer the primary pipeline which already maintains the entire snapshot
+        if self._holdings_source in {"primary", "auto"}:
+            holdings_full = self._ensure_primary_holdings()
+            if holdings_full is not None:
+                normalised = self._normalise_holdings_frame(holdings_full)
+                self._last_holdings_fetch = datetime.utcnow()
+                return normalised
+
+        # Fallback to whatever holdings backend is configured
+        return self.get_holdings(None)
+
+    def get_holdings_metadata(self) -> Dict[str, Any]:
+        """Return metadata about the latest holdings snapshot."""
+
+        metadata: Dict[str, Any] = {"source": self._holdings_source.upper()}
+        if self._primary_metadata:
+            metadata.update(dict(self._primary_metadata))
+
+        primary_meta = self._metadata.get("primary_holdings") if isinstance(self._metadata, dict) else {}
+        if isinstance(primary_meta, dict):
+            metadata.setdefault("as_of", primary_meta.get("as_of"))
+            metadata.setdefault("fund_id", primary_meta.get("fund_id"))
+
+        if self._last_holdings_fetch is not None:
+            metadata.setdefault("fetched_at", self._last_holdings_fetch.isoformat())
+
+        return metadata
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _store_holdings_in_cache(
+        self, cache_key: str, holdings_df: Optional[pd.DataFrame]
+    ) -> Optional[pd.DataFrame]:
+        if holdings_df is None:
+            self._holdings_cache[cache_key] = None
+            return None
+
+        normalised = self._normalise_holdings_frame(holdings_df)
+        self._holdings_cache[cache_key] = normalised.copy()
+        self._last_holdings_fetch = datetime.utcnow()
+        return normalised.copy()
+
+    @staticmethod
+    def _normalise_holdings_frame(df: pd.DataFrame) -> pd.DataFrame:
+        """Ensure a consistent schema for downstream analysis."""
+
+        working = df.copy()
+
+        if "Symbol" in working.columns:
+            working["Symbol"] = working["Symbol"].astype(str).str.strip()
+            working["Symbol"] = working["Symbol"].replace(
+                {"": pd.NA, "nan": pd.NA, "None": pd.NA, "<NA>": pd.NA}
+            )
+
+        if "Name" in working.columns:
+            working["Name"] = working["Name"].astype(str).str.strip()
+
+        if "Weight" in working.columns:
+            working["Weight"] = pd.to_numeric(working["Weight"], errors="coerce")
+
+        required_cols = ["Symbol", "Weight"]
+        missing = [col for col in required_cols if col not in working.columns]
+        for col in missing:
+            working[col] = pd.NA
+
+        working = working[working["Symbol"].notna()]
+        if "Weight" in working.columns:
+            working = working[working["Weight"].notna()]
+
+        return working.reset_index(drop=True)
 
     def get_country_allocation(self) -> Optional[pd.DataFrame]:
         """Get country allocation using the configured data source."""
@@ -197,7 +288,7 @@ class ETF(Asset):
         return None
 
     def _get_holdings_alpha_vantage(
-        self, max_holdings: int
+        self, max_holdings: Optional[int]
     ) -> Optional[pd.DataFrame]:
         """
         Get holdings from AlphaVantage API.
@@ -213,18 +304,18 @@ class ETF(Asset):
                 self._av_client = AlphaVantageClient()
 
             holdings_df = self._av_client.get_etf_profile(self.ticker)
-            
+
             if holdings_df is not None and not holdings_df.empty:
-                # Limit to max holdings
-                holdings_df = holdings_df.head(max_holdings)
-                
+                if max_holdings is not None:
+                    holdings_df = holdings_df.head(max_holdings)
+
                 # Ensure we have required columns
                 if "Symbol" not in holdings_df.columns:
                     holdings_df["Symbol"] = None
                 if "Weight" not in holdings_df.columns:
                     holdings_df["Weight"] = None
-                
-                return holdings_df
+
+                return self._normalise_holdings_frame(holdings_df)
 
             return None
 
@@ -236,7 +327,9 @@ class ETF(Asset):
             print(f"Error fetching AlphaVantage holdings for {self.ticker}: {e}")
             return None
 
-    def _get_holdings_yfinance(self, max_holdings: int) -> Optional[pd.DataFrame]:
+    def _get_holdings_yfinance(
+        self, max_holdings: Optional[int]
+    ) -> Optional[pd.DataFrame]:
         """
         Get holdings from Yahoo Finance (fallback).
 
@@ -282,7 +375,10 @@ class ETF(Asset):
                             / 100.0
                         )
                 
-                return holdings_df.head(max_holdings)
+                if max_holdings is not None:
+                    holdings_df = holdings_df.head(max_holdings)
+
+                return self._normalise_holdings_frame(holdings_df)
 
             return None
 
@@ -341,7 +437,7 @@ class ETF(Asset):
             if total and not pd.isna(total):
                 result["Weight"] = result["Weight"] / total
 
-        return result
+        return self._normalise_holdings_frame(result)
 
     def _get_primary_exposure(self, dimension: str) -> Optional[pd.DataFrame]:
         holdings_full = self._ensure_primary_holdings()

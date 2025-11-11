@@ -256,6 +256,7 @@ def analyze_portfolio_with_assets(
     lookthrough_df: Optional[pd.DataFrame] = None
     exposures: Dict[str, Dict[str, pd.DataFrame]] = {}
     etfs_without_data: List[str] = []
+    etf_holdings_records: Dict[str, Dict[str, object]] = {}
 
     if is_weight_only:
         signature = _portfolio_signature(assets)
@@ -302,6 +303,16 @@ def analyze_portfolio_with_assets(
                                     "Contribution_to_Portfolio": contribution,
                                 }
                             )
+
+                    full_snapshot = asset.get_full_holdings()
+                    if full_snapshot is None or full_snapshot.empty:
+                        full_snapshot = holdings
+
+                    if full_snapshot is not None and not full_snapshot.empty:
+                        etf_holdings_records[asset.ticker] = {
+                            "data": full_snapshot.copy(),
+                            "metadata": asset.get_holdings_metadata(),
+                        }
                 else:
                     etfs_without_data.append(asset.ticker)
 
@@ -368,6 +379,22 @@ def analyze_portfolio_with_assets(
     else:
         etfs_without_data = []
 
+    # Ensure we capture holdings snapshots even when look-through is loaded from cache
+    for asset in assets:
+        if not isinstance(asset, ETF):
+            continue
+        if asset.ticker in etf_holdings_records:
+            continue
+
+        snapshot_df = asset.get_full_holdings()
+        if snapshot_df is None or snapshot_df.empty:
+            snapshot_df = asset.get_holdings(max_etf_holdings)
+        if snapshot_df is not None and not snapshot_df.empty:
+            etf_holdings_records[asset.ticker] = {
+                "data": snapshot_df.copy(),
+                "metadata": asset.get_holdings_metadata(),
+            }
+
     if etfs_without_data:
         print(f"\nETF holdings data not available for: {', '.join(etfs_without_data)}")
 
@@ -380,6 +407,49 @@ def analyze_portfolio_with_assets(
         portfolio_signature=signature if is_weight_only else None,
     )
     exposures.update(exposure_results)
+
+    # Persist ETF holdings snapshots (including timestamp metadata)
+    holdings_output_dir = output_dir / "etf_holdings"
+    holdings_output_dir.mkdir(exist_ok=True)
+    saved_holdings_info: Dict[str, Dict[str, object]] = {}
+
+    for ticker, payload in etf_holdings_records.items():
+        snapshot_df = payload.get("data")
+        if snapshot_df is None or snapshot_df.empty:
+            continue
+
+        metadata = dict(payload.get("metadata") or {})
+        enriched_df = snapshot_df.copy()
+
+        as_of = metadata.get("as_of")
+        if as_of:
+            enriched_df["Holdings_As_Of"] = as_of
+
+        source = metadata.get("source")
+        if source:
+            enriched_df["Holdings_Source"] = source
+
+        fetched_at = metadata.get("fetched_at")
+        if fetched_at:
+            enriched_df["Holdings_Fetched_At"] = fetched_at
+
+        output_path = holdings_output_dir / f"{ticker}_holdings.csv"
+
+        try:
+            enriched_df.to_csv(output_path, index=False)
+        except Exception as exc:
+            print(f"Failed to write holdings snapshot for {ticker} ({exc})")
+            continue
+
+        saved_holdings_info[ticker] = {
+            "path": str(output_path),
+            "metadata": metadata,
+            "data": enriched_df,
+        }
+
+    if saved_holdings_info:
+        holdings_df.attrs["etf_holdings"] = saved_holdings_info
+
     holdings_df.attrs["etf_exposures"] = exposures
 
     asset_plot = SavedPlot(str(asset_path))
