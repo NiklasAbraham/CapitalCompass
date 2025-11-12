@@ -41,15 +41,22 @@ class PrimaryHoldingsClient:
         registry_path: Optional[Path | str] = None,
     ) -> None:
         project_root = Path(__file__).resolve().parent.parent.parent
-        self._base_path = Path(base_path) if base_path else project_root / "data" / "pipeline"
+        self._base_path = (
+            Path(base_path) if base_path else project_root / "data" / "pipeline"
+        )
         self._registry_path = (
-            Path(registry_path) if registry_path else self._base_path / "fund_registry.yaml"
+            Path(registry_path)
+            if registry_path
+            else self._base_path / "fund_registry.yaml"
         )
         self._gold_root = self._base_path / "gold_holdings"
         self._registry: Dict[str, Dict[str, object]] = {}
         self._ticker_index: Dict[str, str] = {}
         self._load_registry()
         self._cache: Dict[str, Tuple[pd.DataFrame, Dict[str, object]]] = {}
+        from pipeline.auto_snapshot import AutoSnapshotManager  # local import
+
+        self._auto_snapshot = AutoSnapshotManager(self._base_path, self._registry)
 
     # ------------------------------------------------------------------
     # Public API
@@ -70,7 +77,9 @@ class PrimaryHoldingsClient:
 
         entry = self._resolve_fund_entry(ticker_upper)
         if entry is None:
-            raise PrimaryHoldingsError(f"Ticker '{ticker}' is not registered in fund registry")
+            raise PrimaryHoldingsError(
+                f"Ticker '{ticker}' is not registered in fund registry"
+            )
 
         snapshot = self._discover_snapshot(entry, as_of)
         if snapshot is None:
@@ -101,7 +110,9 @@ class PrimaryHoldingsClient:
     def get_sector_exposure(self, holdings: pd.DataFrame) -> Optional[pd.DataFrame]:
         return self._aggregate_dimension(holdings, "Sector")
 
-    def get_asset_class_exposure(self, holdings: pd.DataFrame) -> Optional[pd.DataFrame]:
+    def get_asset_class_exposure(
+        self, holdings: pd.DataFrame
+    ) -> Optional[pd.DataFrame]:
         return self._aggregate_dimension(holdings, "Asset_Class")
 
     # ------------------------------------------------------------------
@@ -118,7 +129,9 @@ class PrimaryHoldingsClient:
 
         funds = data.get("funds", {})
         if not isinstance(funds, dict):
-            raise PrimaryHoldingsError("fund_registry.yaml must contain a mapping at 'funds'")
+            raise PrimaryHoldingsError(
+                "fund_registry.yaml must contain a mapping at 'funds'"
+            )
 
         for fund_id, entry in funds.items():
             if not isinstance(entry, dict):
@@ -159,6 +172,13 @@ class PrimaryHoldingsClient:
         relative_path = entry.get("gold_path") or f"fund_id={fund_id}"
         fund_root = self._gold_root / relative_path
         if not fund_root.exists():
+            auto_result = self._auto_snapshot.ensure_snapshot(entry, as_of_override)
+            if auto_result.success:
+                return self._discover_snapshot(entry, as_of_override)
+            else:
+                print(
+                    f"Auto snapshot attempt failed for {entry.get('fund_id')}: {auto_result.message}"
+                )
             return None
 
         target_date = None
@@ -202,6 +222,13 @@ class PrimaryHoldingsClient:
                     )
 
         if not candidates:
+            auto_result = self._auto_snapshot.ensure_snapshot(entry, as_of_override)
+            if auto_result.success:
+                return self._discover_snapshot(entry, as_of_override)
+            else:
+                print(
+                    f"Auto snapshot attempt failed for {entry.get('fund_id')}: {auto_result.message}"
+                )
             return None
 
         candidates.sort(key=lambda snap: (snap.as_of, snap.version))
@@ -264,7 +291,9 @@ class PrimaryHoldingsClient:
             else:
                 mv = pd.to_numeric(working.get("market_value_local"), errors="coerce")
             if mv is None or mv.isna().all():
-                raise PrimaryHoldingsError("Snapshot is missing weight and market value information")
+                raise PrimaryHoldingsError(
+                    "Snapshot is missing weight and market value information"
+                )
             weight_series = mv / mv.sum()
 
         total_weight = weight_series.sum()
@@ -287,7 +316,9 @@ class PrimaryHoldingsClient:
         return working.reset_index(drop=True)
 
     @staticmethod
-    def _aggregate_dimension(holdings: pd.DataFrame, column: str) -> Optional[pd.DataFrame]:
+    def _aggregate_dimension(
+        holdings: pd.DataFrame, column: str
+    ) -> Optional[pd.DataFrame]:
         if column not in holdings.columns:
             return None
         subset = holdings[[column, "Weight"]].copy()
@@ -295,6 +326,9 @@ class PrimaryHoldingsClient:
         if subset.empty:
             return None
         aggregated = (
-            subset.groupby(column)["Weight"].sum().reset_index().sort_values("Weight", ascending=False)
+            subset.groupby(column)["Weight"]
+            .sum()
+            .reset_index()
+            .sort_values("Weight", ascending=False)
         )
         return aggregated.rename(columns={"Weight": "Weight"})

@@ -74,6 +74,7 @@ class ETF(Asset):
             normalized_source = "auto"
         self._holdings_source = normalized_source
         self._use_alpha_vantage = use_alpha_vantage or self._holdings_source == "alpha_vantage"
+        self._require_holdings = self._holdings_source == "primary"
         self._av_client: Optional[AlphaVantageClient] = None
         self._is_excluded_type = False
         self._country_allocation: Optional[pd.DataFrame] = None
@@ -118,6 +119,9 @@ class ETF(Asset):
                 keyword in name_lower or keyword in category_lower
                 for keyword in self.EXCLUSION_KEYWORDS
             )
+
+            if self._require_holdings:
+                self._is_excluded_type = False
 
             # Store ETF-specific metadata
             self._metadata = {

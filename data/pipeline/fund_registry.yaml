@@ -14,24 +14,18 @@ funds:
       - SPY
   US4642874576:
     fund_id: US4642874576
+    cik: "0000930667"
+    series_id: "S000035395"
+    class_id: "C000108746"
     issuer: iShares
     name: iShares MSCI World ETF
     domicile: US
     share_class_isin: US4642874576
     gold_path: fund_id=US4642874576
-    default_as_of: 2024-03-29
+    freshness_days: 30
     tickers:
       - URTH
-  IE00BKM4GZ66:
-    fund_id: IE00BKM4GZ66
-    issuer: iShares
-    name: iShares MSCI EM IMI ESG Screened UCITS ETF
-    domicile: IE
-    share_class_isin: IE00BKM4GZ66
-    gold_path: fund_id=IE00BKM4GZ66
-    default_as_of: 2024-03-29
-    tickers:
-      - IMAE.AS
+
   LU0659580072:
     fund_id: LU0659580072
     issuer: Xtrackers
@@ -40,18 +34,16 @@ funds:
     share_class_isin: LU0659580072
     gold_path: fund_id=LU0659580072
     default_as_of: 2024-03-29
+    auto_source: yfinance
+    fallback_holdings:
+      - symbol: CASH_EUR
+        name: Cash (Euro Overnight)
+        weight: 1.0
+        country: Eurozone
+        sector: Cash
+        asset_class: Cash
     tickers:
       - XEOND.XD
-  LU0635178014:
-    fund_id: LU0635178014
-    issuer: Amundi
-    name: Amundi Multi-Asset Conservative Portfolio
-    domicile: LU
-    share_class_isin: LU0635178014
-    gold_path: fund_id=LU0635178014
-    default_as_of: 2024-03-29
-    tickers:
-      - CEBE.DE
   VOO:
     fund_id: VOO
     cik: "0000036405"

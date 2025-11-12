@@ -2,7 +2,7 @@
 
 ## Overview
 
-This pipeline automatically discovers, downloads, and parses **SEC Form N-PORT filings** to extract point-in-time ETF holdings data. All data is stored in a file-based system with full lineage tracking.
+This pipeline automatically discovers, downloads, and parses **SEC Form N-PORT filings** to extract point-in-time ETF holdings data. When an ETF is not covered by EDGAR, the system can fall back to secondary sources or registry-defined positions so that downstream analysis never encounters a missing holdings file. All data is stored in a file-based system with full lineage tracking.
 
 ## Architecture
 
@@ -101,6 +101,14 @@ Validates data quality and generates reports.
 ### 6. `ingest_nport.py`
 Main orchestration script.
 
+### 7. `auto_snapshot.py`
+Ensures a gold snapshot exists for every fund requested by the analysis layer.
+
+**Resolution order:**
+- If a fund entry includes `cik` (and optionally `series_id`/`class_id`), the pipeline triggers a full N-PORT ingestion.
+- If no SEC filing exists, the manager attempts the configured `auto_source` (currently `yfinance`).
+- If the secondary source is missing data, the optional `fallback_holdings` list from the registry is materialised.
+
 ## Configuration
 
 ### Fund Registry (`fund_registry.yaml`)
@@ -120,7 +128,28 @@ funds:
     freshness_days: 30          # Re-fetch after 30 days
     tickers:
       - SPY
+
+  US4642874576:
+    fund_id: US4642874576
+    cik: "0000930667"
+    series_id: "S000035395"
+    class_id: "C000108746"
+    issuer: iShares
+    name: iShares MSCI World ETF
+    domicile: US
+    share_class_isin: US4642874576
+    gold_path: fund_id=US4642874576
+    freshness_days: 30
+    tickers:
+      - URTH
 ```
+
+#### Optional fields
+
+| Key | Purpose |
+|-----|---------|
+| `auto_source` | Secondary data source to use when no SEC filing exists (e.g. `yfinance`). |
+| `fallback_holdings` | Static positions to seed `gold_holdings` when both SEC and secondary sources return nothing. |
 
 ## Usage
 
@@ -157,6 +186,9 @@ Follow these steps to validate that discovery, download, parsing, enrichment, an
 
 4. **Review QA report**
    - Open `data/qa/fund_id=SPY/<as_of>/qa_report.json` and ensure weight-sum and identifier coverage checks report success.
+
+5. **Auto snapshot fallback**
+   - For funds without SEC coverage, call `PrimaryHoldingsClient().fetch_holdings('<TICKER>')` and confirm a `gold_holdings` directory is created with the snapshot sourced from `auto_source` or `fallback_holdings`.
 
 If any step fails—especially if the raw XML is missing or malformed—rerun the ingestion with `--force` and consult the logs under `logs/nport_ingest.log`.
 
@@ -201,6 +233,8 @@ Additional columns:
 - `sector` - Sector classification
 - `instrument_name` - Cleaned name
 
+When `auto_source` or `fallback_holdings` are used, the generated CSV includes the same column layout but may populate identifiers or metadata with `"Unknown"` where the upstream feed does not supply values.
+
 ## Quality Assurance
 
 QA reports are generated in JSON format:
@@ -241,6 +275,8 @@ QA reports are generated in JSON format:
 3. **ISIN Resolution** - CUSIP-to-ISIN mapping requires external reference data (not included).
 
 4. **Sector Classification** - Sector enrichment requires external data source or API.
+
+5. **Secondary Source Coverage** - When `auto_source: yfinance` is used, only the provider’s “top holdings” (often ~10 positions) are returned. Configure a CIK/series/class entry whenever possible to receive the full N-PORT look-through.
 
 ### Workarounds
 
