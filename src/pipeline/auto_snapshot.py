@@ -31,7 +31,14 @@ class AutoSnapshotManager:
     ) -> None:
         self._base_path = base_path
         self._registry = registry
-        self._gold_root = base_path / "gold_holdings"
+        # New simplified structure: data/funds/[fund_name]/[date]/
+        project_root = (
+            base_path.parent.parent
+            if base_path.name == "pipeline"
+            else base_path.parent
+        )
+        self._funds_dir = project_root / "data" / "funds"
+        self._funds_dir.mkdir(parents=True, exist_ok=True)
         self._pipeline = None
 
     # ------------------------------------------------------------------ #
@@ -41,18 +48,29 @@ class AutoSnapshotManager:
         as_of_override: Optional[str],
     ) -> AutoSnapshotResult:
         """Ensure a gold snapshot exists for the given fund entry."""
+        import logging
+
+        logger = logging.getLogger(__name__)
 
         fund_id = entry.get("fund_id")
         if not isinstance(fund_id, str):
+            logger.warning("[AutoSnapshot] Missing fund_id in entry")
             return AutoSnapshotResult(False, "Missing fund_id")
 
+        logger.info(f"[AutoSnapshot] ensure_snapshot called for {fund_id}")
+
         if entry.get("cik"):
+            logger.info("[AutoSnapshot] Entry has CIK, using SEC ingestion")
             return self._ingest_from_sec(entry, as_of_override)
 
         source = (entry.get("auto_source") or "").lower()
         if source == "yfinance":
+            logger.info("[AutoSnapshot] Using yfinance source")
             return self._build_from_yfinance(entry, as_of_override)
 
+        logger.warning(
+            f"[AutoSnapshot] No automatic snapshot source configured for {fund_id}"
+        )
         return AutoSnapshotResult(False, "No automatic snapshot source configured")
 
     # ------------------------------------------------------------------ #
@@ -62,31 +80,59 @@ class AutoSnapshotManager:
         as_of_override: Optional[str],
     ) -> AutoSnapshotResult:
         """Run the N-PORT ingestion pipeline for the fund."""
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        fund_id = entry.get("fund_id", "unknown")
+        logger.info(f"[AutoSnapshot] Starting SEC ingestion for {fund_id}")
+
         try:
             from pipeline.ingest_nport import NPORTIngestionPipeline
         except ImportError as exc:  # pragma: no cover - defensive
+            logger.error(f"[AutoSnapshot] Import error: {exc}")
             return AutoSnapshotResult(
                 False, f"Unable to import ingestion pipeline: {exc}"
             )
 
         if self._pipeline is None:
+            logger.info("[AutoSnapshot] Initializing NPORT pipeline...")
             self._pipeline = NPORTIngestionPipeline(
                 base_path=self._base_path,
                 registry_path=self._base_path / "fund_registry.yaml",
             )
+            logger.info("[AutoSnapshot] NPORT pipeline initialized")
 
         target_date: Optional[date] = None
         if as_of_override:
             try:
                 target_date = datetime.strptime(as_of_override, "%Y-%m-%d").date()
+                logger.info(f"[AutoSnapshot] Target date: {target_date}")
             except ValueError:
                 target_date = None
 
-        success = self._pipeline.ingest_fund(
-            fund_id=entry["fund_id"],
-            target_date=target_date,
-            force=True,
-        )
+        logger.info(f"[AutoSnapshot] Calling ingest_fund for {fund_id} (force=True)...")
+        import time
+
+        start_time = time.time()
+
+        try:
+            success = self._pipeline.ingest_fund(
+                fund_id=entry["fund_id"],
+                target_date=target_date,
+                force=True,
+            )
+            elapsed = time.time() - start_time
+            logger.info(
+                f"[AutoSnapshot] ingest_fund completed in {elapsed:.2f}s, success={success}"
+            )
+        except Exception as e:
+            elapsed = time.time() - start_time
+            logger.error(f"[AutoSnapshot] ingest_fund failed after {elapsed:.2f}s: {e}")
+            import traceback
+
+            logger.error(traceback.format_exc())
+            return AutoSnapshotResult(False, f"Ingestion error: {e}")
 
         message = "Ingestion run completed" if success else "Ingestion failed"
         return AutoSnapshotResult(success, message)
@@ -138,7 +184,7 @@ class AutoSnapshotManager:
             or datetime.today().strftime("%Y-%m-%d")
         )
 
-        success = self._write_snapshot(entry["fund_id"], as_of, holdings_df)
+        success = self._write_snapshot(entry["fund_id"], as_of, holdings_df, entry)
         message = "yfinance snapshot created" if success else "Failed to write snapshot"
         return AutoSnapshotResult(success, message)
 
@@ -267,11 +313,31 @@ class AutoSnapshotManager:
         df["Asset_Class"] = df["Asset_Class"].fillna("Equity")
         return df
 
-    def _write_snapshot(self, fund_id: str, as_of: str, df: pd.DataFrame) -> bool:
+    def _get_fund_name(self, entry: Dict[str, object]) -> str:
+        """Get clean fund name for directory structure."""
+        tickers = list(self._iterate_tickers(entry))
+        if tickers:
+            return tickers[0]
+        fund_id = entry.get("fund_id", "unknown")
+        return fund_id.replace("=", "_").replace("/", "_")
+
+    def _write_snapshot(
+        self,
+        fund_id: str,
+        as_of: str,
+        df: pd.DataFrame,
+        entry: Optional[Dict[str, object]] = None,
+    ) -> bool:
         try:
-            fund_dir = self._gold_root / f"fund_id={fund_id}"
-            as_of_dir = fund_dir / f"as_of={as_of}"
-            as_of_dir.mkdir(parents=True, exist_ok=True)
+            # Get fund name
+            if entry:
+                fund_name = self._get_fund_name(entry)
+            else:
+                fund_name = fund_id.replace("=", "_").replace("/", "_")
+
+            # New structure: data/funds/[fund_name]/[date]/holdings.csv
+            date_dir = self._funds_dir / fund_name / as_of
+            date_dir.mkdir(parents=True, exist_ok=True)
 
             df = df.copy()
             if "Weight" not in df.columns or df["Weight"].sum(skipna=True) in (None, 0):
@@ -307,19 +373,8 @@ class AutoSnapshotManager:
                     df[column] = None
             df = df[column_order]
 
-            version_numbers = []
-            for version_dir in as_of_dir.glob("version=*"):
-                try:
-                    version = int(version_dir.name.split("=", 1)[1])
-                    version_numbers.append(version)
-                except (IndexError, ValueError):
-                    continue
-
-            next_version = max(version_numbers, default=0) + 1
-            target_dir = as_of_dir / f"version={next_version}"
-            target_dir.mkdir(parents=True, exist_ok=True)
-
-            df.to_csv(target_dir / "holdings.csv", index=False)
+            # Simple structure: just save holdings.csv directly
+            df.to_csv(date_dir / "holdings.csv", index=False)
             return True
         except Exception:
             return False

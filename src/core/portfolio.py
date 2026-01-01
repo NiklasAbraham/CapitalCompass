@@ -123,9 +123,32 @@ def load_portfolio_config(
                     except ImportError:
                         ticker = isin
                 
-                # Ensure holdings are available for ETFs
-                if asset_type == "etf":
-                    auto_registry.ensure_holdings_available(fund_id or isin, isin, ticker)
+                # Ensure holdings are available for ETFs (but skip if they already exist)
+                if asset_type == "etf" and auto_registry:
+                    # Quick check if holdings exist before triggering slow ingestion
+                    from pathlib import Path
+                    project_root = Path(__file__).resolve().parent.parent.parent
+                    funds_dir = project_root / "data" / "funds"
+                    registry_data = auto_registry._load_registry()
+                    entry = registry_data.get('funds', {}).get(fund_id or isin)
+                    holdings_exist = False
+                    if entry:
+                        # Get fund name
+                        tickers = entry.get('tickers', [])
+                        if tickers:
+                            fund_name = tickers[0] if isinstance(tickers, list) else tickers
+                        else:
+                            fund_name = (fund_id or isin).replace('=', '_').replace('/', '_')
+                        fund_dir = funds_dir / fund_name
+                        if fund_dir.exists():
+                            # Check for any date directories with holdings.csv
+                            date_dirs = [d for d in fund_dir.iterdir() if d.is_dir() and (d / "holdings.csv").exists()]
+                            if date_dirs:
+                                # Holdings exist, skip slow ingestion
+                                holdings_exist = True
+                    if not holdings_exist:
+                        # Holdings don't exist, trigger ingestion
+                        auto_registry.ensure_holdings_available(fund_id or isin, isin, ticker)
             
             if not ticker:
                 ticker = isin  # Fallback to ISIN as ticker

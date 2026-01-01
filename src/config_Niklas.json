@@ -1,22 +1,32 @@
 [
     {
-    "ticker": "URTH",
-    "weight": 0.3649,
-    "type": "etf"
+        "isin": "US4642863926",
+        "weight": 0.1800,
+        "type": "etf"
     },
     {
-    "isin": "LU0908500753",
-    "weight": 0.3649,
-    "type": "etf"
+        "isin": "US9220428745",
+        "weight": 0.1800,
+        "type": "etf"
     },
     {
-    "ticker": "XEOND.XD",
-    "weight": 0.1520,
-    "type": "etf"
+        "isin": "US46436E7186",
+        "weight": 0.1800,
+        "type": "etf"
     },
     {
-    "ticker": "CEBE.DE",
-    "weight": 0.0405,
-    "type": "etf"
+        "isin": "US46435GAA04",
+        "weight": 0.1800,
+        "type": "etf"
+    },
+    {
+        "isin": "US78462F1030",
+        "weight": 0.1400,
+        "type": "etf"
+    },
+    {
+        "isin": "US9229083632",
+        "weight": 0.1400,
+        "type": "etf"
     }
 ]

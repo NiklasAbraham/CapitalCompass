@@ -53,7 +53,8 @@ class PrimaryHoldingsClient:
             if registry_path
             else self._base_path / "fund_registry.yaml"
         )
-        self._gold_root = self._base_path / "gold_holdings"
+        # New simplified structure: data/funds/[fund_name]/[date]/
+        self._funds_dir = project_root / "data" / "funds"
         self._registry: Dict[str, Dict[str, object]] = {}
         self._ticker_index: Dict[str, str] = {}
         self._load_registry()
@@ -72,14 +73,16 @@ class PrimaryHoldingsClient:
         max_positions: Optional[int] = None,
     ) -> Tuple[pd.DataFrame, Dict[str, object]]:
         """Return a holdings DataFrame normalised for downstream analysis.
-        
+
         Args:
             ticker: Ticker symbol or ISIN
             as_of: Optional report date
             max_positions: Optional maximum positions to return
         """
         fetch_start = time.time()
-        logger.info(f"[PrimaryHoldings] fetch_holdings({ticker}, as_of={as_of}, max_positions={max_positions})")
+        logger.info(
+            f"[PrimaryHoldings] fetch_holdings({ticker}, as_of={as_of}, max_positions={max_positions})"
+        )
 
         ticker_upper = ticker.upper()
         cache_key = f"{ticker_upper}:{as_of or 'latest'}:{max_positions or 'all'}"
@@ -96,20 +99,28 @@ class PrimaryHoldingsClient:
             if len(ticker_upper) == 12 and ticker_upper[:2].isalpha():
                 logger.info(f"[PrimaryHoldings] Trying ISIN resolution for {ticker}...")
                 entry = self._resolve_fund_entry_by_isin(ticker_upper)
-            
+
             if entry is None:
                 logger.error(f"[PrimaryHoldings] Fund entry not found for {ticker}")
                 raise PrimaryHoldingsError(
                     f"Ticker/ISIN '{ticker}' is not registered in fund registry"
                 )
-        logger.info(f"[PrimaryHoldings] Resolved to fund_id={entry.get('fund_id')} in {time.time() - resolve_start:.2f}s")
+        logger.info(
+            f"[PrimaryHoldings] Resolved to fund_id={entry.get('fund_id')} in {time.time() - resolve_start:.2f}s"
+        )
 
-        logger.info(f"[PrimaryHoldings] Discovering snapshot for {entry.get('fund_id')}...")
+        logger.info(
+            f"[PrimaryHoldings] Discovering snapshot for {entry.get('fund_id')}..."
+        )
         discover_start = time.time()
         snapshot = self._discover_snapshot(entry, as_of)
-        logger.info(f"[PrimaryHoldings] Snapshot discovery took {time.time() - discover_start:.2f}s")
+        logger.info(
+            f"[PrimaryHoldings] Snapshot discovery took {time.time() - discover_start:.2f}s"
+        )
         if snapshot is None:
-            logger.error(f"[PrimaryHoldings] No snapshot found for {entry.get('fund_id')}")
+            logger.error(
+                f"[PrimaryHoldings] No snapshot found for {entry.get('fund_id')}"
+            )
             raise PrimaryHoldingsError(
                 f"No holdings snapshot found for fund '{entry['fund_id']}'"
                 + (f" with as_of {as_of}" if as_of else "")
@@ -118,12 +129,16 @@ class PrimaryHoldingsClient:
         logger.info(f"[PrimaryHoldings] Loading snapshot from {snapshot.path}...")
         load_start = time.time()
         raw_df = self._load_snapshot(snapshot.path)
-        logger.info(f"[PrimaryHoldings] Loaded {len(raw_df)} rows in {time.time() - load_start:.2f}s")
-        
-        logger.info(f"[PrimaryHoldings] Preparing holdings...")
+        logger.info(
+            f"[PrimaryHoldings] Loaded {len(raw_df)} rows in {time.time() - load_start:.2f}s"
+        )
+
+        logger.info("[PrimaryHoldings] Preparing holdings...")
         prepare_start = time.time()
         prepared_df = self._prepare_holdings(raw_df, max_positions=max_positions)
-        logger.info(f"[PrimaryHoldings] Prepared {len(prepared_df)} holdings in {time.time() - prepare_start:.2f}s")
+        logger.info(
+            f"[PrimaryHoldings] Prepared {len(prepared_df)} holdings in {time.time() - prepare_start:.2f}s"
+        )
 
         metadata = {
             "fund_id": entry.get("fund_id"),
@@ -198,24 +213,43 @@ class PrimaryHoldingsClient:
                 self._ticker_index[ticker_upper] = fund_id
                 return entry
         return None
-    
+
     def _resolve_fund_entry_by_isin(self, isin: str) -> Optional[Dict[str, object]]:
         """Resolve fund entry by ISIN.
-        
+
         Args:
             isin: ISIN identifier
-            
+
         Returns:
             Fund entry or None
         """
         for fund_id, entry in self._registry.items():
             if isinstance(entry, dict):
-                if entry.get('share_class_isin') == isin or entry.get('isin') == isin:
+                if entry.get("share_class_isin") == isin or entry.get("isin") == isin:
                     return entry
                 # Also check if fund_id is the ISIN
                 if fund_id == isin:
                     return entry
         return None
+
+    def _get_fund_name(self, entry: Dict[str, object]) -> str:
+        """Get clean fund name for directory structure.
+
+        Args:
+            entry: Fund registry entry
+
+        Returns:
+            Clean fund name (ticker or fund_id)
+        """
+        # Prefer ticker if available
+        tickers = entry.get("tickers", [])
+        if tickers:
+            ticker = tickers[0] if isinstance(tickers, list) else tickers
+            if ticker:
+                return ticker
+        # Fallback to fund_id, cleaned up
+        fund_id = entry.get("fund_id", "unknown")
+        return fund_id.replace("=", "_").replace("/", "_")
 
     def _discover_snapshot(
         self,
@@ -224,20 +258,37 @@ class PrimaryHoldingsClient:
     ) -> Optional[SnapshotHandle]:
         discover_start = time.time()
         fund_id = entry.get("fund_id")
-        relative_path = entry.get("gold_path") or f"fund_id={fund_id}"
-        fund_root = self._gold_root / relative_path
+        fund_name = self._get_fund_name(entry)
+        fund_root = self._funds_dir / fund_name
         logger.info(f"[PrimaryHoldings] Looking for snapshot in {fund_root}")
-        
+
         if not fund_root.exists():
             logger.warning(f"[PrimaryHoldings] Fund root does not exist: {fund_root}")
-            logger.info(f"[PrimaryHoldings] Attempting auto snapshot...")
+            logger.info(f"[PrimaryHoldings] Attempting auto snapshot for {fund_id}...")
             auto_start = time.time()
-            auto_result = self._auto_snapshot.ensure_snapshot(entry, as_of_override)
-            logger.info(f"[PrimaryHoldings] Auto snapshot took {time.time() - auto_start:.2f}s")
-            if auto_result.success:
-                return self._discover_snapshot(entry, as_of_override)
-            else:
-                logger.warning(f"[PrimaryHoldings] Auto snapshot failed: {auto_result.message}")
+            try:
+                auto_result = self._auto_snapshot.ensure_snapshot(entry, as_of_override)
+                elapsed = time.time() - auto_start
+                logger.info(
+                    f"[PrimaryHoldings] Auto snapshot took {elapsed:.2f}s, success={auto_result.success}"
+                )
+                if auto_result.success:
+                    logger.info(
+                        "[PrimaryHoldings] Retrying snapshot discovery after auto snapshot..."
+                    )
+                    return self._discover_snapshot(entry, as_of_override)
+                else:
+                    logger.warning(
+                        f"[PrimaryHoldings] Auto snapshot failed: {auto_result.message}"
+                    )
+            except Exception as e:
+                elapsed = time.time() - auto_start
+                logger.error(
+                    f"[PrimaryHoldings] Auto snapshot exception after {elapsed:.2f}s: {e}"
+                )
+                import traceback
+
+                logger.error(traceback.format_exc())
             return None
 
         target_date = None
@@ -249,65 +300,77 @@ class PrimaryHoldingsClient:
                     f"Invalid as_of override '{as_of_override}' (expected YYYY-MM-DD)"
                 ) from exc
 
-        logger.info(f"[PrimaryHoldings] Scanning for snapshot files...")
+        logger.info("[PrimaryHoldings] Scanning for snapshot files...")
         scan_start = time.time()
         candidates: list[SnapshotHandle] = []
-        as_of_dirs = list(fund_root.glob("as_of=*"))
-        logger.info(f"[PrimaryHoldings] Found {len(as_of_dirs)} as_of directories")
-        
-        for as_of_dir in as_of_dirs:
-            date_str = as_of_dir.name.split("=", 1)[1]
+
+        # New structure: data/funds/[fund_name]/[date]/holdings.csv
+        date_dirs = [d for d in fund_root.iterdir() if d.is_dir()]
+        logger.info(f"[PrimaryHoldings] Found {len(date_dirs)} date directories")
+
+        for date_dir in date_dirs:
             try:
-                as_of_date = datetime.strptime(date_str, "%Y-%m-%d")
+                as_of_date = datetime.strptime(date_dir.name, "%Y-%m-%d")
             except ValueError:
                 continue
             if target_date and as_of_date.date() != target_date.date():
                 continue
 
-            version_dirs = list(as_of_dir.glob("version=*"))
-            logger.info(f"[PrimaryHoldings] Found {len(version_dirs)} version directories in {as_of_dir.name}")
-            
-            for version_dir in version_dirs:
-                version_str = version_dir.name.split("=", 1)[1]
-                try:
-                    version = int(version_str)
-                except ValueError:
-                    continue
-
-                files = list(version_dir.iterdir())
-                logger.info(f"[PrimaryHoldings] Found {len(files)} files in {version_dir.name}")
-                
-                for file in files:
-                    if not file.is_file():
-                        continue
-                    if file.suffix.lower() not in self.SUPPORTED_EXTENSIONS:
-                        continue
-                    candidates.append(
-                        SnapshotHandle(
-                            fund_id=fund_id,
-                            as_of=as_of_date,
-                            version=version,
-                            path=file,
-                        )
+            # Look for holdings.csv in the date directory
+            holdings_file = date_dir / "holdings.csv"
+            if holdings_file.exists() and holdings_file.is_file():
+                candidates.append(
+                    SnapshotHandle(
+                        fund_id=fund_id,
+                        as_of=as_of_date,
+                        version=1,  # No versioning in new structure
+                        path=holdings_file,
                     )
-        
-        logger.info(f"[PrimaryHoldings] Found {len(candidates)} candidate snapshots in {time.time() - scan_start:.2f}s")
+                )
+                logger.info(f"[PrimaryHoldings] Found holdings in {date_dir.name}")
+
+        logger.info(
+            f"[PrimaryHoldings] Found {len(candidates)} candidate snapshots in {time.time() - scan_start:.2f}s"
+        )
 
         if not candidates:
-            logger.warning(f"[PrimaryHoldings] No candidates found, trying auto snapshot...")
+            logger.warning(
+                f"[PrimaryHoldings] No candidates found, trying auto snapshot for {fund_id}..."
+            )
             auto_start = time.time()
-            auto_result = self._auto_snapshot.ensure_snapshot(entry, as_of_override)
-            logger.info(f"[PrimaryHoldings] Auto snapshot took {time.time() - auto_start:.2f}s")
-            if auto_result.success:
-                return self._discover_snapshot(entry, as_of_override)
-            else:
-                logger.warning(f"[PrimaryHoldings] Auto snapshot failed: {auto_result.message}")
+            try:
+                auto_result = self._auto_snapshot.ensure_snapshot(entry, as_of_override)
+                elapsed = time.time() - auto_start
+                logger.info(
+                    f"[PrimaryHoldings] Auto snapshot took {elapsed:.2f}s, success={auto_result.success}"
+                )
+                if auto_result.success:
+                    logger.info(
+                        "[PrimaryHoldings] Retrying snapshot discovery after auto snapshot..."
+                    )
+                    return self._discover_snapshot(entry, as_of_override)
+                else:
+                    logger.warning(
+                        f"[PrimaryHoldings] Auto snapshot failed: {auto_result.message}"
+                    )
+            except Exception as e:
+                elapsed = time.time() - auto_start
+                logger.error(
+                    f"[PrimaryHoldings] Auto snapshot exception after {elapsed:.2f}s: {e}"
+                )
+                import traceback
+
+                logger.error(traceback.format_exc())
             return None
 
         candidates.sort(key=lambda snap: (snap.as_of, snap.version))
         selected = candidates[-1]
-        logger.info(f"[PrimaryHoldings] Selected snapshot: {selected.path} (as_of={selected.as_of.date()}, version={selected.version})")
-        logger.info(f"[PrimaryHoldings] Total discovery took {time.time() - discover_start:.2f}s")
+        logger.info(
+            f"[PrimaryHoldings] Selected snapshot: {selected.path} (as_of={selected.as_of.date()}, version={selected.version})"
+        )
+        logger.info(
+            f"[PrimaryHoldings] Total discovery took {time.time() - discover_start:.2f}s"
+        )
         return selected
 
     def _load_snapshot(self, path: Path) -> pd.DataFrame:

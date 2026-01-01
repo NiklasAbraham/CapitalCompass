@@ -25,24 +25,6 @@ funds:
     freshness_days: 30
     tickers:
     - URTH
-  LU0659580072:
-    fund_id: LU0659580072
-    issuer: Xtrackers
-    name: Xtrackers STOXX Europe 600 UCITS ETF
-    domicile: LU
-    share_class_isin: LU0659580072
-    gold_path: fund_id=LU0659580072
-    default_as_of: 2024-03-29
-    auto_source: yfinance
-    fallback_holdings:
-    - symbol: CASH_EUR
-      name: Cash (Euro Overnight)
-      weight: 1.0
-      country: Eurozone
-      sector: Cash
-      asset_class: Cash
-    tickers:
-    - XEOND.XD
   VOO:
     fund_id: VOO
     cik: '0000036405'
@@ -56,87 +38,107 @@ funds:
     freshness_days: 30
     tickers:
     - VOO
-  LU2581375156:
-    fund_id: LU2581375156
-    share_class_isin: LU2581375156
-    domicile: LU
-    name: Xtrackers STOXX Europe 600 UCIT
-    issuer: Unknown
-    tickers:
-    - LU2581375156.SG
-    isin: LU2581375156
-    oam: LuxSE
-    freshness_days: 210
-    gold_path: isin=LU2581375156
-    auto_source: yfinance
-  CEBE.DE:
-    fund_id: CEBE.DE
-    share_class_isin: null
-    domicile: null
-    name: "iShares iBonds Dec 2026 Term \u20AC Corp UCITS ETF EUR (Acc)"
-    issuer: BlackRock Asset Management Ireland - ETF
-    auto_source: yfinance
-    freshness_days: 30
-    gold_path: fund_id=CEBE.DE
-    tickers:
-    - CEBE.DE
-  URTH:
-    fund_id: URTH
-    share_class_isin: null
-    domicile: null
-    name: iShares MSCI World ETF
+  US4642863926:
+    fund_id: US4642863926
+    cik: '0000892538'
+    series_id: S000069676
+    class_id: C000222243
     issuer: iShares
-    auto_source: yfinance
+    name: iShares MSCI World ETF
+    domicile: US
+    share_class_isin: US4642863926
+    gold_path: fund_id=US4642863926
     freshness_days: 30
-    gold_path: fund_id=URTH
     tickers:
     - URTH
-  XEOND.XD:
-    fund_id: XEOND.XD
-    share_class_isin: null
-    domicile: null
-    name: Xtrackers II EUR Overnight Rate
-    issuer: Unknown
-    auto_source: yfinance
+  US9220428745:
+    fund_id: US9220428745
+    cik: '0001556505'
+    series_id: S000066116
+    class_id: C000213662
+    issuer: Vanguard
+    name: Vanguard FTSE Europe ETF
+    domicile: US
+    share_class_isin: US9220428745
+    gold_path: fund_id=US9220428745
     freshness_days: 30
-    gold_path: fund_id=XEOND.XD
     tickers:
-    - XEOND.XD
-  LU0908500753:
-    fund_id: LU0908500753
-    share_class_isin: LU0908500753
-    domicile: LU
-    name: Amundi Core Stoxx Europe 600 UCITS ETF Acc
-    issuer: Amundi Luxembourg S.A.
+    - VGK
+  US46436E7186:
+    fund_id: US46436E7186
+    cik: '0001100663'
+    series_id: S000068768
+    class_id: C000219740
+    issuer: iShares
+    name: iShares 0-3 Month Treasury Bond ETF
+    domicile: US
+    share_class_isin: US46436E7186
+    gold_path: fund_id=US46436E7186
+    freshness_days: 30
     tickers:
-    - MEUD.PA
-    isin: LU0908500753
-    jurisdiction: LU
-    oam: LuxSE
-    freshness_days: 210
-    gold_path: isin=LU0908500753
-    auto_source: yfinance
-  FR0011550185:
-    fund_id: FR0011550185
-    share_class_isin: FR0011550185
-    domicile: FR
-    name: Amundi MSCI World UCITS ETF
-    issuer: Amundi
+    - SGOV
+  US46435GAA04:
+    fund_id: US46435GAA04
+    cik: '0001100663'
+    series_id: S000088577
+    class_id: C000254885
+    issuer: iShares
+    name: iShares iBonds Dec 2026 Term Corporate ETF
+    domicile: US
+    share_class_isin: US46435GAA04
+    gold_path: fund_id=US46435GAA04
+    freshness_days: 30
     tickers:
-    - CW8.PA
-    isin: FR0011550185
-    jurisdiction: FR
-    freshness_days: 185
-    gold_path: fund_id=FR0011550185
-  FR0013380607:
-    fund_id: FR0013380607
-    share_class_isin: FR0013380607
-    domicile: FR
-    name: Amundi CAC 40 UCITS ETF Acc
-    issuer: Amundi
+    - IBDR
+  US4642863926:
+    fund_id: US4642863926
+    cik: 0000892538
+    series_id: S000069676
+    class_id: C000222243
+    issuer: iShares
+    name: iShares MSCI World ETF
+    domicile: US
+    share_class_isin: US4642863926
+    gold_path: fund_id=US4642863926
+    freshness_days: 30
     tickers:
-    - CA40.PA
-    isin: FR0013380607
-    jurisdiction: FR
-    freshness_days: 185
-    gold_path: fund_id=FR0013380607
+    - URTH
+  US9220428745:
+    fund_id: US9220428745
+    cik: '0001556505'
+    series_id: S000066116
+    class_id: C000213662
+    issuer: Vanguard
+    name: Vanguard FTSE Europe ETF
+    domicile: US
+    share_class_isin: US9220428745
+    gold_path: fund_id=US9220428745
+    freshness_days: 30
+    tickers:
+    - VGK
+  US46436E7186:
+    fund_id: US46436E7186
+    cik: '0001100663'
+    series_id: S000068768
+    class_id: C000219740
+    issuer: iShares
+    name: iShares 0-3 Month Treasury Bond ETF
+    domicile: US
+    share_class_isin: US46436E7186
+    gold_path: fund_id=US46436E7186
+    freshness_days: 30
+    tickers:
+    - SGOV
+  US46435GAA04:
+    fund_id: US46435GAA04
+    cik: '0001100663'
+    series_id: S000088577
+    class_id: C000254885
+    issuer: iShares
+    name: iShares iBonds Dec 2026 Term Corporate ETF
+    domicile: US
+    share_class_isin: US46435GAA04
+    gold_path: fund_id=US46435GAA04
+    freshness_days: 30
+    tickers:
+    - IBDR
