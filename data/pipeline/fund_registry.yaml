@@ -116,3 +116,15 @@ funds:
     freshness_days: 210
     gold_path: isin=LU0908500753
     auto_source: yfinance
+  FR0011550185:
+    fund_id: FR0011550185
+    share_class_isin: FR0011550185
+    domicile: FR
+    name: Amundi MSCI World UCITS ETF
+    issuer: Amundi
+    tickers:
+    - CW8.PA
+    isin: FR0011550185
+    jurisdiction: FR
+    freshness_days: 185
+    gold_path: fund_id=FR0011550185
