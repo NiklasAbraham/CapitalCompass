@@ -67,7 +67,13 @@ class PrimaryHoldingsClient:
         as_of: Optional[str] = None,
         max_positions: Optional[int] = None,
     ) -> Tuple[pd.DataFrame, Dict[str, object]]:
-        """Return a holdings DataFrame normalised for downstream analysis."""
+        """Return a holdings DataFrame normalised for downstream analysis.
+        
+        Args:
+            ticker: Ticker symbol or ISIN
+            as_of: Optional report date
+            max_positions: Optional maximum positions to return
+        """
 
         ticker_upper = ticker.upper()
         cache_key = f"{ticker_upper}:{as_of or 'latest'}:{max_positions or 'all'}"
@@ -77,9 +83,14 @@ class PrimaryHoldingsClient:
 
         entry = self._resolve_fund_entry(ticker_upper)
         if entry is None:
-            raise PrimaryHoldingsError(
-                f"Ticker '{ticker}' is not registered in fund registry"
-            )
+            # Try to resolve by ISIN if ticker looks like an ISIN
+            if len(ticker_upper) == 12 and ticker_upper[:2].isalpha():
+                entry = self._resolve_fund_entry_by_isin(ticker_upper)
+            
+            if entry is None:
+                raise PrimaryHoldingsError(
+                    f"Ticker/ISIN '{ticker}' is not registered in fund registry"
+                )
 
         snapshot = self._discover_snapshot(entry, as_of)
         if snapshot is None:
@@ -161,6 +172,24 @@ class PrimaryHoldingsClient:
             if any(t.upper() == ticker_upper for t in self._iterate_tickers(entry)):
                 self._ticker_index[ticker_upper] = fund_id
                 return entry
+        return None
+    
+    def _resolve_fund_entry_by_isin(self, isin: str) -> Optional[Dict[str, object]]:
+        """Resolve fund entry by ISIN.
+        
+        Args:
+            isin: ISIN identifier
+            
+        Returns:
+            Fund entry or None
+        """
+        for fund_id, entry in self._registry.items():
+            if isinstance(entry, dict):
+                if entry.get('share_class_isin') == isin or entry.get('isin') == isin:
+                    return entry
+                # Also check if fund_id is the ISIN
+                if fund_id == isin:
+                    return entry
         return None
 
     def _discover_snapshot(

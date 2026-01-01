@@ -1,9 +1,9 @@
 funds:
   SPY:
     fund_id: SPY
-    cik: "0000884394"
-    series_id: "S000000593"
-    class_id: "C000000664"
+    cik: 0000884394
+    series_id: S000000593
+    class_id: C000000664
     issuer: State Street
     name: SPDR S&P 500 ETF Trust
     domicile: US
@@ -11,12 +11,12 @@ funds:
     gold_path: fund_id=SPY
     freshness_days: 30
     tickers:
-      - SPY
+    - SPY
   US4642874576:
     fund_id: US4642874576
-    cik: "0000930667"
-    series_id: "S000035395"
-    class_id: "C000108746"
+    cik: 0000930667
+    series_id: S000035395
+    class_id: C000108746
     issuer: iShares
     name: iShares MSCI World ETF
     domicile: US
@@ -24,8 +24,7 @@ funds:
     gold_path: fund_id=US4642874576
     freshness_days: 30
     tickers:
-      - URTH
-
+    - URTH
   LU0659580072:
     fund_id: LU0659580072
     issuer: Xtrackers
@@ -36,19 +35,19 @@ funds:
     default_as_of: 2024-03-29
     auto_source: yfinance
     fallback_holdings:
-      - symbol: CASH_EUR
-        name: Cash (Euro Overnight)
-        weight: 1.0
-        country: Eurozone
-        sector: Cash
-        asset_class: Cash
+    - symbol: CASH_EUR
+      name: Cash (Euro Overnight)
+      weight: 1.0
+      country: Eurozone
+      sector: Cash
+      asset_class: Cash
     tickers:
-      - XEOND.XD
+    - XEOND.XD
   VOO:
     fund_id: VOO
-    cik: "0000036405"
-    series_id: "S000002839"
-    class_id: "C000170274"
+    cik: '0000036405'
+    series_id: S000002839
+    class_id: C000170274
     issuer: Vanguard
     name: Vanguard 500 Index Fund ETF Shares
     domicile: US
@@ -56,4 +55,64 @@ funds:
     gold_path: fund_id=VOO
     freshness_days: 30
     tickers:
-      - VOO
+    - VOO
+  LU2581375156:
+    fund_id: LU2581375156
+    share_class_isin: LU2581375156
+    domicile: LU
+    name: Xtrackers STOXX Europe 600 UCIT
+    issuer: Unknown
+    tickers:
+    - LU2581375156.SG
+    isin: LU2581375156
+    oam: LuxSE
+    freshness_days: 210
+    gold_path: isin=LU2581375156
+    auto_source: yfinance
+  CEBE.DE:
+    fund_id: CEBE.DE
+    share_class_isin: null
+    domicile: null
+    name: "iShares iBonds Dec 2026 Term \u20AC Corp UCITS ETF EUR (Acc)"
+    issuer: BlackRock Asset Management Ireland - ETF
+    auto_source: yfinance
+    freshness_days: 30
+    gold_path: fund_id=CEBE.DE
+    tickers:
+    - CEBE.DE
+  URTH:
+    fund_id: URTH
+    share_class_isin: null
+    domicile: null
+    name: iShares MSCI World ETF
+    issuer: iShares
+    auto_source: yfinance
+    freshness_days: 30
+    gold_path: fund_id=URTH
+    tickers:
+    - URTH
+  XEOND.XD:
+    fund_id: XEOND.XD
+    share_class_isin: null
+    domicile: null
+    name: Xtrackers II EUR Overnight Rate
+    issuer: Unknown
+    auto_source: yfinance
+    freshness_days: 30
+    gold_path: fund_id=XEOND.XD
+    tickers:
+    - XEOND.XD
+  LU0908500753:
+    fund_id: LU0908500753
+    share_class_isin: LU0908500753
+    domicile: LU
+    name: Amundi Core Stoxx Europe 600 UCITS ETF Acc
+    issuer: Amundi Luxembourg S.A.
+    tickers:
+    - MEUD.PA
+    isin: LU0908500753
+    jurisdiction: LU
+    oam: LuxSE
+    freshness_days: 210
+    gold_path: isin=LU0908500753
+    auto_source: yfinance

@@ -71,13 +71,68 @@ def load_portfolio_config(
     with open(filepath, "r") as f:
         config = json.load(f)
 
+    # Import auto-registry for ISIN handling
+    try:
+        from pipeline.auto_registry import AutoRegistry
+        auto_registry = AutoRegistry()
+    except ImportError:
+        auto_registry = None
+
     assets: List[Asset] = []
 
     for item in config:
-        ticker = item["ticker"]
+        ticker = item.get("ticker")
+        isin = item.get("isin")
         asset_type = item.get("type", "stock").lower()
         units = item.get("units", 0)
         weight = item.get("weight") or item.get("percentage")
+
+        # Auto-register any ETF that's not in registry
+        if asset_type == "etf" and auto_registry:
+            fund_id = auto_registry.ensure_fund_registered(
+                isin=isin,
+                ticker=ticker,
+                asset_type=asset_type,
+            )
+
+        # Handle ISIN-only entries
+        if not ticker and isin:
+            if auto_registry:
+                # Auto-register and get fund_id
+                fund_id = auto_registry.ensure_fund_registered(
+                    isin=isin,
+                    ticker=None,
+                    asset_type=asset_type if asset_type != "stock" else None,
+                )
+                
+                # Auto-detect asset type if not specified
+                if asset_type == "stock":
+                    detected_type = auto_registry._detect_asset_type(isin, None)
+                    asset_type = detected_type
+                
+                # Try to get ticker from registry or yfinance
+                if fund_id and fund_id != isin:
+                    ticker = fund_id
+                else:
+                    # Try to find ticker via yfinance
+                    try:
+                        import yfinance as yf
+                        # Search by ISIN - this is approximate
+                        # In practice, we'd need an ISIN-to-ticker mapping
+                        ticker = isin  # Use ISIN as ticker for now
+                    except ImportError:
+                        ticker = isin
+                
+                # Ensure holdings are available for ETFs
+                if asset_type == "etf":
+                    auto_registry.ensure_holdings_available(fund_id or isin, isin, ticker)
+            
+            if not ticker:
+                ticker = isin  # Fallback to ISIN as ticker
+
+        # Ensure we have a ticker
+        if not ticker:
+            raise ValueError(f"Portfolio entry must have either 'ticker' or 'isin': {item}")
 
         if asset_type == "etf":
             holdings_source = (
