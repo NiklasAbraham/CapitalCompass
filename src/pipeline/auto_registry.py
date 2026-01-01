@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from pipeline.ingest_nport import NPORTIngestionPipeline
 from pipeline.ingest_oam import OAMIngestionPipeline
+from pipeline.ingest_bdif import BDIFIngestionPipeline
 
 
 class AutoRegistry:
@@ -427,7 +428,18 @@ class AutoRegistry:
             except Exception as e:
                 print(f"Failed to ingest OAM for {isin_identifier}: {e}")
                 return False
+
+        elif domicile == 'FR' and isin_identifier:
+            # Use BDIF pipeline
+            try:
+                pipeline = BDIFIngestionPipeline(
+                    base_path=self.base_path,
+                    registry_path=self.registry_path,
+                )
+                return pipeline.ingest_fund(fund_id, force=False)
+            except Exception as e:
+                print(f"Failed to ingest BDIF for {fund_id}: {e}")
+                return False
         
         # For other cases, auto_snapshot will handle it via PrimaryHoldingsClient
         return True
-
