@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
@@ -9,6 +11,8 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 try:
     import yaml
@@ -74,33 +78,52 @@ class PrimaryHoldingsClient:
             as_of: Optional report date
             max_positions: Optional maximum positions to return
         """
+        fetch_start = time.time()
+        logger.info(f"[PrimaryHoldings] fetch_holdings({ticker}, as_of={as_of}, max_positions={max_positions})")
 
         ticker_upper = ticker.upper()
         cache_key = f"{ticker_upper}:{as_of or 'latest'}:{max_positions or 'all'}"
         if cache_key in self._cache:
+            logger.info(f"[PrimaryHoldings] Using cached data for {ticker}")
             cached_df, cached_meta = self._cache[cache_key]
             return cached_df.copy(), dict(cached_meta)
 
+        logger.info(f"[PrimaryHoldings] Resolving fund entry for {ticker}...")
+        resolve_start = time.time()
         entry = self._resolve_fund_entry(ticker_upper)
         if entry is None:
             # Try to resolve by ISIN if ticker looks like an ISIN
             if len(ticker_upper) == 12 and ticker_upper[:2].isalpha():
+                logger.info(f"[PrimaryHoldings] Trying ISIN resolution for {ticker}...")
                 entry = self._resolve_fund_entry_by_isin(ticker_upper)
             
             if entry is None:
+                logger.error(f"[PrimaryHoldings] Fund entry not found for {ticker}")
                 raise PrimaryHoldingsError(
                     f"Ticker/ISIN '{ticker}' is not registered in fund registry"
                 )
+        logger.info(f"[PrimaryHoldings] Resolved to fund_id={entry.get('fund_id')} in {time.time() - resolve_start:.2f}s")
 
+        logger.info(f"[PrimaryHoldings] Discovering snapshot for {entry.get('fund_id')}...")
+        discover_start = time.time()
         snapshot = self._discover_snapshot(entry, as_of)
+        logger.info(f"[PrimaryHoldings] Snapshot discovery took {time.time() - discover_start:.2f}s")
         if snapshot is None:
+            logger.error(f"[PrimaryHoldings] No snapshot found for {entry.get('fund_id')}")
             raise PrimaryHoldingsError(
                 f"No holdings snapshot found for fund '{entry['fund_id']}'"
                 + (f" with as_of {as_of}" if as_of else "")
             )
 
+        logger.info(f"[PrimaryHoldings] Loading snapshot from {snapshot.path}...")
+        load_start = time.time()
         raw_df = self._load_snapshot(snapshot.path)
+        logger.info(f"[PrimaryHoldings] Loaded {len(raw_df)} rows in {time.time() - load_start:.2f}s")
+        
+        logger.info(f"[PrimaryHoldings] Preparing holdings...")
+        prepare_start = time.time()
         prepared_df = self._prepare_holdings(raw_df, max_positions=max_positions)
+        logger.info(f"[PrimaryHoldings] Prepared {len(prepared_df)} holdings in {time.time() - prepare_start:.2f}s")
 
         metadata = {
             "fund_id": entry.get("fund_id"),
@@ -113,6 +136,8 @@ class PrimaryHoldingsClient:
         }
 
         self._cache[cache_key] = (prepared_df.copy(), dict(metadata))
+        total_time = time.time() - fetch_start
+        logger.info(f"[PrimaryHoldings] Total fetch_holdings took {total_time:.2f}s")
         return prepared_df, metadata
 
     def get_country_exposure(self, holdings: pd.DataFrame) -> Optional[pd.DataFrame]:
@@ -197,17 +222,22 @@ class PrimaryHoldingsClient:
         entry: Dict[str, object],
         as_of_override: Optional[str],
     ) -> Optional[SnapshotHandle]:
+        discover_start = time.time()
         fund_id = entry.get("fund_id")
         relative_path = entry.get("gold_path") or f"fund_id={fund_id}"
         fund_root = self._gold_root / relative_path
+        logger.info(f"[PrimaryHoldings] Looking for snapshot in {fund_root}")
+        
         if not fund_root.exists():
+            logger.warning(f"[PrimaryHoldings] Fund root does not exist: {fund_root}")
+            logger.info(f"[PrimaryHoldings] Attempting auto snapshot...")
+            auto_start = time.time()
             auto_result = self._auto_snapshot.ensure_snapshot(entry, as_of_override)
+            logger.info(f"[PrimaryHoldings] Auto snapshot took {time.time() - auto_start:.2f}s")
             if auto_result.success:
                 return self._discover_snapshot(entry, as_of_override)
             else:
-                print(
-                    f"Auto snapshot attempt failed for {entry.get('fund_id')}: {auto_result.message}"
-                )
+                logger.warning(f"[PrimaryHoldings] Auto snapshot failed: {auto_result.message}")
             return None
 
         target_date = None
@@ -219,8 +249,13 @@ class PrimaryHoldingsClient:
                     f"Invalid as_of override '{as_of_override}' (expected YYYY-MM-DD)"
                 ) from exc
 
+        logger.info(f"[PrimaryHoldings] Scanning for snapshot files...")
+        scan_start = time.time()
         candidates: list[SnapshotHandle] = []
-        for as_of_dir in fund_root.glob("as_of=*"):
+        as_of_dirs = list(fund_root.glob("as_of=*"))
+        logger.info(f"[PrimaryHoldings] Found {len(as_of_dirs)} as_of directories")
+        
+        for as_of_dir in as_of_dirs:
             date_str = as_of_dir.name.split("=", 1)[1]
             try:
                 as_of_date = datetime.strptime(date_str, "%Y-%m-%d")
@@ -229,14 +264,20 @@ class PrimaryHoldingsClient:
             if target_date and as_of_date.date() != target_date.date():
                 continue
 
-            for version_dir in as_of_dir.glob("version=*"):
+            version_dirs = list(as_of_dir.glob("version=*"))
+            logger.info(f"[PrimaryHoldings] Found {len(version_dirs)} version directories in {as_of_dir.name}")
+            
+            for version_dir in version_dirs:
                 version_str = version_dir.name.split("=", 1)[1]
                 try:
                     version = int(version_str)
                 except ValueError:
                     continue
 
-                for file in version_dir.iterdir():
+                files = list(version_dir.iterdir())
+                logger.info(f"[PrimaryHoldings] Found {len(files)} files in {version_dir.name}")
+                
+                for file in files:
                     if not file.is_file():
                         continue
                     if file.suffix.lower() not in self.SUPPORTED_EXTENSIONS:
@@ -249,19 +290,25 @@ class PrimaryHoldingsClient:
                             path=file,
                         )
                     )
+        
+        logger.info(f"[PrimaryHoldings] Found {len(candidates)} candidate snapshots in {time.time() - scan_start:.2f}s")
 
         if not candidates:
+            logger.warning(f"[PrimaryHoldings] No candidates found, trying auto snapshot...")
+            auto_start = time.time()
             auto_result = self._auto_snapshot.ensure_snapshot(entry, as_of_override)
+            logger.info(f"[PrimaryHoldings] Auto snapshot took {time.time() - auto_start:.2f}s")
             if auto_result.success:
                 return self._discover_snapshot(entry, as_of_override)
             else:
-                print(
-                    f"Auto snapshot attempt failed for {entry.get('fund_id')}: {auto_result.message}"
-                )
+                logger.warning(f"[PrimaryHoldings] Auto snapshot failed: {auto_result.message}")
             return None
 
         candidates.sort(key=lambda snap: (snap.as_of, snap.version))
-        return candidates[-1]
+        selected = candidates[-1]
+        logger.info(f"[PrimaryHoldings] Selected snapshot: {selected.path} (as_of={selected.as_of.date()}, version={selected.version})")
+        logger.info(f"[PrimaryHoldings] Total discovery took {time.time() - discover_start:.2f}s")
+        return selected
 
     def _load_snapshot(self, path: Path) -> pd.DataFrame:
         suffix = path.suffix.lower()

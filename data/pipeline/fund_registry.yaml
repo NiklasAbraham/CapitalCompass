@@ -128,3 +128,15 @@ funds:
     jurisdiction: FR
     freshness_days: 185
     gold_path: fund_id=FR0011550185
+  FR0013380607:
+    fund_id: FR0013380607
+    share_class_isin: FR0013380607
+    domicile: FR
+    name: Amundi CAC 40 UCITS ETF Acc
+    issuer: Amundi
+    tickers:
+    - CA40.PA
+    isin: FR0013380607
+    jurisdiction: FR
+    freshness_days: 185
+    gold_path: fund_id=FR0013380607

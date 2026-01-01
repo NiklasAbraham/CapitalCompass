@@ -2,10 +2,14 @@
 ETF asset class with issuer/SEC pipeline and AlphaVantage integration.
 """
 
+import logging
+import time
 from typing import Dict, Optional
 
 import pandas as pd
 import yfinance as yf
+
+logger = logging.getLogger(__name__)
 
 from .base import Asset
 
@@ -92,23 +96,39 @@ class ETF(Asset):
         Returns:
             True if data fetch succeeded, False otherwise.
         """
+        logger.info(f"[ETF {self.ticker}] Starting data fetch...")
+        fetch_start = time.time()
         try:
+            logger.info(f"[ETF {self.ticker}] Creating yfinance Ticker object...")
             self._yf_ticker = yf.Ticker(self.ticker)
 
             # Get price
+            logger.info(f"[ETF {self.ticker}] Fetching price data...")
             try:
                 self._price = self._yf_ticker.fast_info.get("lastPrice")
-            except Exception:
+                logger.info(f"[ETF {self.ticker}] Got price from fast_info: {self._price}")
+            except Exception as e:
+                logger.warning(f"[ETF {self.ticker}] fast_info failed: {e}")
                 self._price = None
 
             if self._price is None:
+                logger.info(f"[ETF {self.ticker}] Fetching full info (this may be slow)...")
+                info_start = time.time()
                 info = self._yf_ticker.info
+                logger.info(f"[ETF {self.ticker}] Info fetch took {time.time() - info_start:.2f}s")
                 self._price = info.get("currentPrice") or info.get(
                     "regularMarketPrice"
                 ) or info.get("navPrice")
+                logger.info(f"[ETF {self.ticker}] Got price from info: {self._price}")
 
             # Get ETF metadata
-            info = self._yf_ticker.info
+            if self._price is None:
+                logger.info(f"[ETF {self.ticker}] Fetching ETF metadata...")
+                info_start = time.time()
+                info = self._yf_ticker.info
+                logger.info(f"[ETF {self.ticker}] Metadata fetch took {time.time() - info_start:.2f}s")
+            else:
+                info = self._yf_ticker.info
             self._name = info.get("longName") or info.get("shortName", self.ticker)
             self._sector = info.get("category", "ETF")
 
@@ -133,39 +153,63 @@ class ETF(Asset):
                 "inception_date": info.get("fundInceptionDate"),
             }
 
+            elapsed = time.time() - fetch_start
+            logger.info(f"[ETF {self.ticker}] Data fetch completed in {elapsed:.2f}s")
             return self._price is not None
 
         except Exception as e:
-            print(f"Error fetching data for ETF {self.ticker}: {e}")
+            elapsed = time.time() - fetch_start
+            logger.error(f"[ETF {self.ticker}] Error fetching data after {elapsed:.2f}s: {e}")
             return False
 
     def get_holdings(self, max_holdings: int = 15) -> Optional[pd.DataFrame]:
         """Get underlying holdings of the ETF."""
+        logger.info(f"[ETF {self.ticker}] Getting holdings (max={max_holdings}, source={self._holdings_source})...")
+        holdings_start = time.time()
+        
         # Skip holdings lookup for money market and bond funds
         if self._is_excluded_type:
+            logger.info(f"[ETF {self.ticker}] Skipping holdings (excluded type)")
             return None
 
         # Try the primary pipeline first when requested
         if self._holdings_source in {"primary", "auto"}:
+            logger.info(f"[ETF {self.ticker}] Trying primary pipeline...")
+            primary_start = time.time()
             holdings_df = self._get_holdings_primary(max_holdings)
+            logger.info(f"[ETF {self.ticker}] Primary pipeline took {time.time() - primary_start:.2f}s")
             if holdings_df is not None:
+                logger.info(f"[ETF {self.ticker}] Got {len(holdings_df)} holdings from primary pipeline")
                 return holdings_df
             if self._holdings_source == "primary":
+                logger.warning(f"[ETF {self.ticker}] Primary pipeline failed and source=primary, returning None")
                 return None
 
         # Try AlphaVantage next
         if self._holdings_source in {"alpha_vantage", "auto"} and self._use_alpha_vantage:
+            logger.info(f"[ETF {self.ticker}] Trying AlphaVantage...")
+            av_start = time.time()
             holdings_df = self._get_holdings_alpha_vantage(max_holdings)
+            logger.info(f"[ETF {self.ticker}] AlphaVantage took {time.time() - av_start:.2f}s")
             if holdings_df is not None:
+                logger.info(f"[ETF {self.ticker}] Got {len(holdings_df)} holdings from AlphaVantage")
                 return holdings_df
             if self._holdings_source == "alpha_vantage":
+                logger.info(f"[ETF {self.ticker}] AlphaVantage failed, falling back to Yahoo Finance")
                 return self._get_holdings_yfinance(max_holdings)
 
         if self._holdings_source == "yahoo":
+            logger.info(f"[ETF {self.ticker}] Using Yahoo Finance...")
             return self._get_holdings_yfinance(max_holdings)
 
         # Fallback to Yahoo Finance
-        return self._get_holdings_yfinance(max_holdings)
+        logger.info(f"[ETF {self.ticker}] Falling back to Yahoo Finance...")
+        yf_start = time.time()
+        result = self._get_holdings_yfinance(max_holdings)
+        logger.info(f"[ETF {self.ticker}] Yahoo Finance took {time.time() - yf_start:.2f}s")
+        total_time = time.time() - holdings_start
+        logger.info(f"[ETF {self.ticker}] Total holdings fetch took {total_time:.2f}s")
+        return result
 
     def get_country_allocation(self) -> Optional[pd.DataFrame]:
         """Get country allocation using the configured data source."""
@@ -312,32 +356,46 @@ class ETF(Asset):
 
     def _ensure_primary_holdings(self) -> Optional[pd.DataFrame]:
         if self._primary_holdings_full is not None:
+            logger.info(f"[ETF {self.ticker}] Using cached primary holdings")
             return self._primary_holdings_full
 
+        logger.info(f"[ETF {self.ticker}] Ensuring primary client...")
         client = self._ensure_primary_client()
         if client is None:
+            logger.warning(f"[ETF {self.ticker}] Primary client not available")
             return None
 
+        logger.info(f"[ETF {self.ticker}] Fetching holdings from primary client...")
+        fetch_start = time.time()
         try:
             holdings_df, metadata = client.fetch_holdings(self.ticker)
+            logger.info(f"[ETF {self.ticker}] Primary client fetch took {time.time() - fetch_start:.2f}s")
         except PrimaryHoldingsError as exc:
+            elapsed = time.time() - fetch_start
             self._primary_error = str(exc)
-            print(f"Primary holdings error for {self.ticker}: {exc}")
+            logger.error(f"[ETF {self.ticker}] Primary holdings error after {elapsed:.2f}s: {exc}")
             return None
 
         if holdings_df is None or holdings_df.empty:
+            logger.warning(f"[ETF {self.ticker}] Primary holdings are empty")
             return None
 
+        logger.info(f"[ETF {self.ticker}] Got {len(holdings_df)} holdings from primary pipeline")
         self._primary_holdings_full = holdings_df
         self._primary_metadata = metadata
         self._metadata.setdefault("primary_holdings", {}).update(metadata)
         return self._primary_holdings_full
 
     def _get_holdings_primary(self, max_holdings: int) -> Optional[pd.DataFrame]:
+        logger.info(f"[ETF {self.ticker}] _get_holdings_primary: ensuring primary holdings...")
+        ensure_start = time.time()
         holdings_full = self._ensure_primary_holdings()
+        logger.info(f"[ETF {self.ticker}] _ensure_primary_holdings took {time.time() - ensure_start:.2f}s")
         if holdings_full is None:
+            logger.warning(f"[ETF {self.ticker}] No primary holdings available")
             return None
 
+        logger.info(f"[ETF {self.ticker}] Processing {len(holdings_full)} holdings...")
         result = holdings_full.copy()
         if max_holdings:
             result = result.head(max_holdings).copy()
@@ -345,6 +403,7 @@ class ETF(Asset):
             if total and not pd.isna(total):
                 result["Weight"] = result["Weight"] / total
 
+        logger.info(f"[ETF {self.ticker}] Returning {len(result)} holdings")
         return result
 
     def _get_primary_exposure(self, dimension: str) -> Optional[pd.DataFrame]:

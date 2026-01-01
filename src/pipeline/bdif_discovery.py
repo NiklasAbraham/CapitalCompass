@@ -48,6 +48,7 @@ class BDIFDiscovery:
         isin: str,
         target_date: Optional[date] = None,
         rows: int = 100,
+        debug: bool = False,
     ) -> List[BDIFReportMetadata]:
         """Discover reports for a given ISIN.
 
@@ -55,6 +56,7 @@ class BDIFDiscovery:
             isin: ISIN code (e.g., 'FR0011550185')
             target_date: Optional target date for backfill
             rows: Number of results to fetch
+            debug: Enable debug logging
 
         Returns:
             List of report metadata sorted by as_of desc
@@ -63,55 +65,130 @@ class BDIFDiscovery:
 
         records: List[BDIFReportMetadata] = []
 
-        for nature in ["A.1.1", "A.1.2"]:
+        # Search by ISIN - try multiple search strategies
+        # Note: The info-financiere.gouv.fr API appears to be primarily for listed companies,
+        # not UCITS funds. BDIF reports for UCITS may need to be accessed through the
+        # BDIF website directly (https://bdif.amf-france.org) or a different API endpoint.
+        search_queries = [
+            (isin, "Direct ISIN search"),
+            (f"identificationsociete_iso_cd_isi:{isin}", "Field-specific ISIN search"),
+            (f'code_isin_nom_sc:"*{isin}*"', "ISIN in code_isin_nom_sc field"),
+            # Also try searching by partial ISIN in case of formatting differences
+            (isin[:9], "Partial ISIN search (first 9 chars)"),
+        ]
+
+        for query, query_desc in search_queries:
+            if debug:
+                print(f"  Trying: {query_desc} ({query})")
+            
             params = {
                 "dataset": self.dataset,
-                "q": isin,
-                "facet": "document_type",
-                "sort": "-publication_date",
+                "q": query,
                 "rows": rows,
             }
 
             payload = self._get_json(params)
             if not payload:
+                if debug:
+                    print(f"    No payload returned")
                 continue
+
+            total_hits = payload.get("nhits", 0)
+            if debug:
+                print(f"    API returned {total_hits} total hits, {len(payload.get('records', []))} records in response")
 
             for record in payload.get("records", []):
                 fields = record.get("fields", {})
-                document_type = fields.get("document_type", "")
-                if not document_type.startswith(nature):
+                
+                # Debug: show what we found
+                if debug:
+                    record_isin = fields.get("identificationsociete_iso_cd_isi", "N/A")
+                    record_title = fields.get("informationdeposee_inf_tit_inf", "N/A")[:60]
+                    print(f"    Record: ISIN={record_isin}, Title={record_title}")
+                
+                # Verify this record matches our ISIN
+                record_isin = fields.get("identificationsociete_iso_cd_isi", "")
+                if record_isin != isin:
+                    if debug:
+                        print(f"      Skipping: ISIN mismatch ({record_isin} != {isin})")
                     continue
-                url = fields.get("attachment_original")
+                
+                # Get PDF URL - use url_de_recuperation field
+                url = fields.get("url_de_recuperation")
                 if not url:
+                    if debug:
+                        print(f"      Skipping: No PDF URL found")
                     continue
 
-                as_of = self._parse_date(fields.get("date_cloture"))
+                # Get date - try multiple date fields
+                as_of = self._parse_date(fields.get("uin_dat_amf"))
                 if not as_of:
-                    as_of = self._parse_date(fields.get("publication_date"))
+                    as_of = self._parse_date(fields.get("uin_dat_mar"))
                 if not as_of:
+                    as_of = self._parse_date(fields.get("informationdeposee_inf_dat_emt"))
+                if not as_of:
+                    if debug:
+                        print(f"      Skipping: No valid date found")
                     continue
 
                 if target_date and as_of != target_date:
+                    if debug:
+                        print(f"      Skipping: Date mismatch ({as_of} != {target_date})")
                     continue
 
-                record_id = fields.get("doc_id") or record.get("recordid", "")
-                title = fields.get("title") or fields.get("titre") or fields.get("libelle")
+                # Get document type information
+                doc_code = fields.get("informationdeposee_inf_cod_dif", "")
+                doc_subtype = fields.get("sous_type_d_information", "")
+                doc_type = fields.get("type_d_information", "")
+                
+                if debug:
+                    print(f"      Document info: code={doc_code}, subtype={doc_subtype[:40]}, type={doc_type[:40]}")
+                
+                # Filter for BDIF reports - look for periodic financial reports
+                # Accept reports that might contain holdings information
+                is_periodic_report = (
+                    "périodique" in doc_type.lower() or
+                    "periodic" in doc_type.lower() or
+                    "rapport" in doc_subtype.lower() or
+                    "report" in doc_subtype.lower() or
+                    "composition" in doc_subtype.lower() or
+                    "actif" in doc_subtype.lower() or
+                    "portefeuille" in doc_subtype.lower() or
+                    "portfolio" in doc_subtype.lower()
+                )
+                
+                # Accept all reports with PDFs for now - let parser filter
+                # This is more permissive but ensures we don't miss valid reports
+                if debug and not is_periodic_report:
+                    print(f"      Note: Not clearly a periodic report, but including anyway")
+
+                record_id = record.get("recordid", "")
+                title = fields.get("informationdeposee_inf_tit_inf") or fields.get("code_isin_nom_sc", "")
+
+                if debug:
+                    print(f"      ✓ Adding report: {as_of} | {title[:50]}")
 
                 records.append(
                     BDIFReportMetadata(
                         pdf_url=url,
                         as_of=as_of,
                         record_id=record_id,
-                        nature_document=document_type,
+                        nature_document=doc_code or doc_subtype or doc_type,
                         title=title,
                     )
                 )
+            
+            # If we found records with this query, don't try the next one
+            if records:
+                if debug:
+                    print(f"  Found {len(records)} records with {query_desc}, stopping search")
+                break
 
         records.sort(key=lambda r: r.as_of, reverse=True)
 
         print(f"Found {len(records)} report(s)")
         for report in records:
-            print(f"  {report.as_of} | {report.nature_document} | {report.pdf_url}")
+            print(f"  {report.as_of} | {report.nature_document[:40]} | {report.title[:50] if report.title else 'N/A'}")
 
         return records
 
@@ -154,10 +231,14 @@ class BDIFDiscovery:
 
     @staticmethod
     def _parse_date(value: Optional[str]) -> Optional[date]:
-        """Parse YYYY-MM-DD date string."""
+        """Parse date from various formats (YYYY-MM-DD or ISO datetime)."""
         if not value:
             return None
         try:
+            # Try ISO datetime format first (e.g., "2012-04-12T16:30:31+00:00")
+            if "T" in value:
+                return datetime.fromisoformat(value.replace("Z", "+00:00")).date()
+            # Try simple date format
             return datetime.strptime(value[:10], "%Y-%m-%d").date()
-        except ValueError:
+        except (ValueError, AttributeError):
             return None

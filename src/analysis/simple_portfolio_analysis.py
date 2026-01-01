@@ -4,11 +4,21 @@ Simple Portfolio Analysis using Asset Classes
 Provides current portfolio overview with ETF look-through using AlphaVantage API.
 """
 
+import logging
 import sys
+import time
 from pathlib import Path
 from typing import Dict
 
 import pandas as pd
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 try:
     from config import PORTFOLIO_FILE
@@ -50,14 +60,20 @@ def run_simple_portfolio_analysis(
     Returns:
         Dictionary with analysis results.
     """
+    start_time = time.time()
+    logger.info(f"Starting portfolio analysis with config: {config_path}")
+    logger.info(f"Holdings source: {holdings_source}, Max holdings: {max_etf_holdings}")
+    
     # Resolve config path relative to project root
     if not Path(config_path).is_absolute():
         config_path = str(PROJECT_ROOT / config_path)
-
-    # Load and display portfolio configuration
+    
+    logger.info(f"Loading portfolio configuration from: {config_path}")
+    load_start = time.time()
     assets = load_portfolio_config(
         config_path, holdings_source_override=holdings_source
     )
+    logger.info(f"Loaded {len(assets)} assets in {time.time() - load_start:.2f}s")
 
     print("=" * 50)
     print("Current Portfolio Configuration:")
@@ -75,6 +91,8 @@ def run_simple_portfolio_analysis(
     print("=" * 50)
 
     # Run analysis
+    logger.info("Starting portfolio composition analysis...")
+    analysis_start = time.time()
     asset_plot, sector_plot, holdings_df, lookthrough_df = (
         analyze_portfolio_composition(
             filepath=config_path,
@@ -82,6 +100,7 @@ def run_simple_portfolio_analysis(
             holdings_source_override=holdings_source,
         )
     )
+    logger.info(f"Portfolio analysis completed in {time.time() - analysis_start:.2f}s")
 
     # Display asset allocation plot
     if asset_plot:
@@ -179,6 +198,9 @@ def run_simple_portfolio_analysis(
         etf_df = pd.DataFrame(etf_details)
         print(etf_df.to_string(index=False))
 
+    total_time = time.time() - start_time
+    logger.info(f"Total analysis time: {total_time:.2f}s")
+    
     return {
         "holdings": holdings_df,
         "lookthrough": lookthrough_df,
